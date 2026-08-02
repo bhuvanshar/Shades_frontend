@@ -1,0 +1,96 @@
+.hero {
+  position: relative;
+  width: 100%;
+  height: 90vh;
+  min-height: 480px;
+  max-height: 800px;
+  overflow: hidden;
+}
+
+.hero-image {
+  width: 100%;
+  height: 100%;
+}
+
+.hero-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: linear-gradient(
+    180deg,
+    rgba(20, 23, 17, 0.15) 0%,
+    rgba(20, 23, 17, 0.34) 55%,
+    rgba(20, 23, 17, 0.48) 100%
+  );
+  color: white;
+  padding: 40px;
+}
+
+.hero-tag {
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+  opacity: 0.85;
+  animation: fadeIn 0.8s ease both;
+}
+
+.hero-overlay h1 {
+  font-size: clamp(32px, 5.5vw, 68px);
+  font-weight: 300;
+  line-height: 1.1;
+  margin-bottom: 20px;
+  letter-spacing: -0.5px;
+  animation: fadeIn 0.8s 0.15s ease both;
+}
+
+.hero-overlay p {
+  font-size: 15px;
+  font-weight: 300;
+  margin-bottom: 36px;
+  opacity: 0.85;
+  max-width: 400px;
+  line-height: 1.5;
+  animation: fadeIn 0.8s 0.3s ease both;
+}
+
+.hero-cta {
+  display: inline-block;
+  padding: 15px 52px;
+  background: white;
+  color: var(--text-dark);
+  font-size: 12px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  font-weight: 500;
+  transition: background 0.3s, color 0.3s;
+  animation: fadeIn 0.8s 0.45s ease both;
+}
+
+.hero-cta:hover {
+  background: var(--primary);
+  color: white;
+}
+
+@media (max-width: 750px) {
+  .hero {
+    height: 70vh;
+    min-height: 400px;
+  }
+  .hero-overlay p {
+    font-size: 13px;
+  }
+  .hero-cta {
+    padding: 13px 40px;
+  }
+}
