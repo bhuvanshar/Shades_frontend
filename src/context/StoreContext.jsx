@@ -3,6 +3,7 @@ import { addWishlistItem, getStoreProducts, getWishlist, removeWishlistItem } fr
 import { useAuth } from "./AuthContext";
 
 export const StoreContext = createContext(null);
+const storefrontCategories = ["All", "Men", "Women", "Unisex", "Accessory"];
 
 const mapProduct = (product) => {
   const variants = (product.variants || []).filter((variant) => variant.isActive);
@@ -55,7 +56,7 @@ const StoreContextProvider = ({ children }) => {
     return () => { active = false; };
   }, [accessToken, user, isAdmin]);
 
-  const categories = useMemo(() => ["All", ...new Set(product_list.flatMap((product) => product.categories.map((category) => category.categoryName)))], [product_list]);
+  const categories = useMemo(() => storefrontCategories, []);
   const cartKey = (itemId, variantId) => variantId ? `${itemId}:${variantId}` : String(itemId);
   const addToCart = (itemId, variantId) => { setAppliedOffer(null); setCartItems((previous) => { const key = cartKey(itemId, variantId); return { ...previous, [key]: (previous[key] || 0) + 1 }; }); };
   const removeFromCart = (itemId, variantId) => { setAppliedOffer(null); setCartItems((previous) => { const key = cartKey(itemId, variantId); const count = (previous[key] || 0) - 1; if (count <= 0) { const updated = { ...previous }; delete updated[key]; return updated; } return { ...previous, [key]: count }; }); };

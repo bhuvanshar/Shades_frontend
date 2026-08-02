@@ -8,6 +8,7 @@ import "./AdminProducts.css";
 
 const newVariant = () => ({ clientId: crypto.randomUUID(), sku: "", variantName: "", color: "", lensColor: "", price: "", quantityAvailable: "0", lowStockThreshold: "5", files: [], imageDescription: "" });
 const emptyProduct = () => ({ productName: "", productDescription: "", brand: "Shades World", basePrice: "", categoryIds: [], attributes: { frame_material: "", frame_shape: "", uv_protection: "UV400", polarization: "" } });
+const storefrontCategoryNames = ["Men", "Women", "Unisex", "Accessory"];
 
 export default function AdminProducts() {
   const { accessToken } = useAuth();
@@ -18,7 +19,7 @@ export default function AdminProducts() {
   const [selected, setSelected] = useState(null); const [variant, setVariant] = useState(newVariant()); const [upload, setUpload] = useState({ files: [], altText: "", variantId: "", isPrimary: false }); const [stockInputs, setStockInputs] = useState({});
   const [saving, setSaving] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
 
-  const load = useCallback(async () => { setLoading(true); setError(""); try { const [page, list] = await Promise.all([getAdminProducts(accessToken), getCategories()]); setProducts(page.content || []); setCategories(list || []); } catch (e) { setError(e.message); } finally { setLoading(false); } }, [accessToken]);
+  const load = useCallback(async () => { setLoading(true); setError(""); try { const [page, list] = await Promise.all([getAdminProducts(accessToken), getCategories()]); setProducts(page.content || []); setCategories((list || []).filter((item) => storefrontCategoryNames.includes(item.categoryName))); } catch (e) { setError(e.message); } finally { setLoading(false); } }, [accessToken]);
   useEffect(() => { load(); }, [load]);
   const filtered = useMemo(() => products.filter((p) => { const term = query.trim().toLowerCase(); return (!term || p.productName?.toLowerCase().includes(term) || p.brand?.toLowerCase().includes(term) || p.variants?.some((v) => v.sku.toLowerCase().includes(term))) && (status === "all" || (status === "active" ? p.isActive : !p.isActive)) && (category === "all" || p.categories?.some((c) => String(c.categoryId) === category)); }), [products, query, status, category]);
   const totalStock = (p) => p.variants?.reduce((sum, v) => sum + Number(v.quantityAvailable || 0), 0) || 0;
@@ -26,7 +27,7 @@ export default function AdminProducts() {
   const primaryImage = (p) => p.images?.find((i) => i.isPrimary) || p.images?.[0];
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const updateAttribute = (field, value) => setForm((current) => ({ ...current, attributes: { ...current.attributes, [field]: value } }));
-  const toggleCategory = (id) => setForm((current) => ({ ...current, categoryIds: current.categoryIds.includes(id) ? current.categoryIds.filter((item) => item !== id) : [...current.categoryIds, id] }));
+  const toggleCategory = (id) => setForm((current) => ({ ...current, categoryIds: [id] }));
   const updateDraft = (clientId, field, value) => setDraftVariants((current) => current.map((v) => v.clientId === clientId ? { ...v, [field]: value } : v));
 
   const openCreate = () => { setEditing(null); setForm(emptyProduct()); setDraftVariants([newVariant()]); setProductFiles([]); setProductImageDescription(""); setFormOpen(true); setSelected(null); setError(""); };
@@ -37,6 +38,7 @@ export default function AdminProducts() {
   const saveProduct = async (event) => {
     event.preventDefault(); setSaving(true); setError(""); setNotice("");
     try {
+      if (form.categoryIds.length !== 1) throw new Error("Select one category: Men, Women, Unisex, or Accessory.");
       if (!draftVariants.length) throw new Error("Add at least one product variant.");
       const payload = { ...form, basePrice: Number(form.basePrice), attributes: Object.fromEntries(Object.entries(form.attributes).filter(([, value]) => value)), initialVariant: variantPayload(draftVariants[0]) };
       let saved = editing ? await updateProduct(accessToken, editing.productId, payload) : await createProduct(accessToken, payload);

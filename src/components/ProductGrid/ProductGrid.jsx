@@ -9,7 +9,7 @@ const ProductGrid = ({ category }) => {
   const filtered =
     category === "All"
       ? product_list
-      : product_list.filter((item) => item.category === category);
+      : product_list.filter((item) => item.categories.some((entry) => entry.categoryName === category));
 
   return (
     <section className="product-grid">
