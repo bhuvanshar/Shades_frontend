@@ -12,6 +12,7 @@ import AdminDashboard from "./pages/Admin/AdminDashboard";
 import ProtectedRoute from "./components/ProtectedRoute/ProtectedRoute";
 import { useAuth } from "./context/AuthContext";
 import MyOrders from "./pages/MyOrders/MyOrders";
+import Wishlist from "./pages/Wishlist/Wishlist";
 
 const ScrollToTop = () => {
   const { pathname, hash } = useLocation();
@@ -70,6 +71,7 @@ const App = () => {
           <Route path="/order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
           <Route path="/product/:id" element={<ProductDetail />} />
           <Route path="/my-orders" element={<ProtectedRoute><MyOrders /></ProtectedRoute>} />
+          <Route path="/wishlist" element={<ProtectedRoute><Wishlist /></ProtectedRoute>} />
         </Routes></div><Footer />
       </>} />
     </Routes></>

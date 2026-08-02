@@ -86,6 +86,7 @@
 .pd-actions {
   margin-bottom: 40px;
 }
+.pd-wishlist-btn{width:100%;margin-bottom:10px;padding:13px;border:1px solid var(--primary);background:#fff;color:var(--primary);font-size:11px;font-weight:600;letter-spacing:1.3px;text-transform:uppercase}.pd-wishlist-btn.saved{background:#e8eee9}
 
 .pd-add-btn {
   width: 100%;

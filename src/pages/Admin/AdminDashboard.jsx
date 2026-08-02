@@ -5,6 +5,7 @@ import AdminProducts from "./AdminProducts";
 import AdminOrders from "./AdminOrders";
 import AdminInventory from "./AdminInventory";
 import AdminCustomers from "./AdminCustomers";
+import AdminReturns from "./AdminReturns";
 import "./AdminDashboard.css";
 
 const toLocalInput = (date) => {
@@ -120,13 +121,13 @@ const AdminDashboard = () => {
         <nav aria-label="Admin navigation">
           <button className={section === "overview" ? "active" : ""} onClick={() => setSection("overview")}>Overview</button>
           <button className={section === "offers" ? "active" : ""} onClick={goToOffers}>Offers</button>
-          <button className={section === "products" ? "active" : ""} onClick={() => { setSection("products"); setError(""); setNotice(""); }}>Products</button><button className={section === "orders" ? "active" : ""} onClick={() => { setSection("orders"); setError(""); setNotice(""); }}>Orders</button><button className={section === "inventory" ? "active" : ""} onClick={() => setSection("inventory")}>Inventory</button><button className={section === "customers" ? "active" : ""} onClick={() => setSection("customers")}>Customers</button>
+          <button className={section === "products" ? "active" : ""} onClick={() => { setSection("products"); setError(""); setNotice(""); }}>Products</button><button className={section === "orders" ? "active" : ""} onClick={() => { setSection("orders"); setError(""); setNotice(""); }}>Orders</button><button className={section === "returns" ? "active" : ""} onClick={() => setSection("returns")}>Returns & refunds</button><button className={section === "inventory" ? "active" : ""} onClick={() => setSection("inventory")}>Inventory</button><button className={section === "customers" ? "active" : ""} onClick={() => setSection("customers")}>Customers</button>
         </nav>
         <button className="admin-signout" onClick={signOut}>Sign out</button>
       </aside>
 
       <main className="admin-main">
-        <header className="admin-header"><div><span>Store administration</span><h1>{section === "offers" ? "Offers & coupons" : section === "products" ? "Product catalog" : section === "orders" ? "Order operations" : section === "inventory" ? "Stock operations" : section === "customers" ? "Customer management" : `Good day, ${user?.name?.split(" ")[0]}.`}</h1></div><div className="admin-avatar">{user?.name?.charAt(0)?.toUpperCase()}</div></header>
+        <header className="admin-header"><div><span>Store administration</span><h1>{section === "offers" ? "Offers & coupons" : section === "products" ? "Product catalog" : section === "orders" ? "Order operations" : section === "returns" ? "Returns & refunds" : section === "inventory" ? "Stock operations" : section === "customers" ? "Customer management" : `Good day, ${user?.name?.split(" ")[0]}.`}</h1></div><div className="admin-avatar">{user?.name?.charAt(0)?.toUpperCase()}</div></header>
         {error && <div className="admin-alert error" role="alert">{error}</div>}
         {notice && <div className="admin-alert success" role="status">{notice}</div>}
 
@@ -146,8 +147,9 @@ const AdminDashboard = () => {
             <div className="offer-form-grid">
               <label>Coupon code *<input value={offer.couponCode} onChange={(e) => updateOffer("couponCode", e.target.value)} placeholder="SUMMER25" maxLength="50" required /></label>
               <label>Description<input value={offer.description} onChange={(e) => updateOffer("description", e.target.value)} placeholder="Summer collection promotion" maxLength="255" /></label>
-              <label>Discount type *<select value={offer.discountType} onChange={(e) => updateOffer("discountType", e.target.value)}><option value="PERCENTAGE">Percentage</option><option value="FIXED">Fixed amount</option></select></label>
-              <label>{offer.discountType === "PERCENTAGE" ? "Discount percent *" : "Discount amount (₹) *"}<input type="number" min="0.01" step="0.01" value={offer.discountValue} onChange={(e) => updateOffer("discountValue", e.target.value)} required /></label>
+              <label>Discount type *<select value={offer.discountType} onChange={(e) => updateOffer("discountType", e.target.value)}><option value="PAIR_FIXED">Amount off every 2 units</option><option value="PERCENTAGE">Percentage</option><option value="FIXED">Fixed amount</option></select></label>
+              <label>{offer.discountType === "PERCENTAGE" ? "Discount percent *" : offer.discountType === "PAIR_FIXED" ? "Discount per 2 units (₹) *" : "Discount amount (₹) *"}<input type="number" min="0.01" step="0.01" value={offer.discountValue} onChange={(e) => updateOffer("discountValue", e.target.value)} placeholder={offer.discountType === "PAIR_FIXED" ? "500" : ""} required /></label>
+              {offer.discountType === "PAIR_FIXED" && <div className="pair-offer-preview"><span>How it works</span><strong>14 units ÷ 2 = 7 pairs</strong><p>7 × ₹{Number(offer.discountValue || 0).toLocaleString("en-IN")} = ₹{(7 * Number(offer.discountValue || 0)).toLocaleString("en-IN")} total discount</p><small>An unmatched odd unit receives no discount.</small></div>}
               <label>Minimum order (₹)<input type="number" min="0" step="0.01" value={offer.minimumOrderAmount} onChange={(e) => updateOffer("minimumOrderAmount", e.target.value)} /></label>
               <label>Maximum discount (₹)<input type="number" min="0" step="0.01" value={offer.maximumDiscountAmount} onChange={(e) => updateOffer("maximumDiscountAmount", e.target.value)} placeholder="No cap" /></label>
               <label>Starts *<input type="datetime-local" value={offer.validFrom} onChange={(e) => updateOffer("validFrom", e.target.value)} required /></label>
@@ -163,7 +165,7 @@ const AdminDashboard = () => {
               const state = offerState(coupon);
               return <article className="offer-row" key={coupon.couponId}>
                 <div className="offer-code"><span>{coupon.couponCode}</span><small>{coupon.description || "No description"}</small></div>
-                <div><small>Discount</small><strong>{coupon.discountType === "PERCENTAGE" ? `${coupon.discountValue}%` : `₹${coupon.discountValue}`}</strong></div>
+                <div><small>Discount</small><strong>{coupon.discountType === "PERCENTAGE" ? `${coupon.discountValue}%` : coupon.discountType === "PAIR_FIXED" ? `₹${coupon.discountValue} / pair` : `₹${coupon.discountValue}`}</strong></div>
                 <div><small>Minimum spend</small><strong>₹{coupon.minimumOrderAmount || 0}</strong></div>
                 <div><small>Valid until</small><strong>{new Date(coupon.validTo).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</strong></div>
                 <span className={`offer-status ${state.toLowerCase()}`}>{state}</span>
@@ -171,7 +173,7 @@ const AdminDashboard = () => {
               </article>;
             })}
           </section>
-        </> : section === "products" ? <AdminProducts /> : section === "orders" ? <AdminOrders /> : section === "inventory" ? <AdminInventory /> : <AdminCustomers />}
+        </> : section === "products" ? <AdminProducts /> : section === "orders" ? <AdminOrders /> : section === "returns" ? <AdminReturns /> : section === "inventory" ? <AdminInventory /> : <AdminCustomers />}
       </main>
     </div>
   );

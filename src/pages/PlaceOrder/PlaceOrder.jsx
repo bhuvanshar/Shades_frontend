@@ -4,10 +4,11 @@ import { StoreContext } from "../../context/StoreContext";
 import { Link } from "react-router-dom";
 
 const PlaceOrder = () => {
-  const { getTotalCartAmount } = useContext(StoreContext);
+  const { getTotalCartAmount, appliedOffer } = useContext(StoreContext);
   const subtotal = getTotalCartAmount();
+  const discount = Number(appliedOffer?.calculatedDiscount || 0);
   const deliveryFee = subtotal === 0 ? 0 : subtotal >= 1500 ? 0 : 99;
-  const total = subtotal + deliveryFee;
+  const total = Math.max(0, subtotal - discount + deliveryFee);
 
   return (
     <div className="place-order-page">
@@ -46,6 +47,7 @@ const PlaceOrder = () => {
                 <span>Shipping</span>
                 <span>{deliveryFee === 0 ? "Free" : `₹${deliveryFee}`}</span>
               </div>
+              {appliedOffer && <div className="checkout-row checkout-discount"><span>Offer ({appliedOffer.couponCode})</span><span>−₹{discount.toLocaleString("en-IN")}</span></div>}
               <div className="checkout-divider" />
               <div className="checkout-row checkout-total-row">
                 <span>Total</span>

@@ -9,7 +9,7 @@ import BrandWordmark from "../BrandWordmark/BrandWordmark";
 const Navbar = () => {
   const [menu, setMenu] = useState("home");
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { getCartCount } = useContext(StoreContext);
+  const { getCartCount, wishlistItems } = useContext(StoreContext);
   const { user, isAdmin, signOut } = useAuth();
 
   const cartCount = getCartCount();
@@ -71,6 +71,7 @@ const Navbar = () => {
             </Link>
           </li>
           {user && !isAdmin && <li><Link to="/my-orders" onClick={() => { setMenu("orders"); closeMenu(); }} className={menu === "orders" ? "active" : ""}>My Orders</Link></li>}
+          {user && !isAdmin && <li><Link to="/wishlist" onClick={() => { setMenu("wishlist"); closeMenu(); }} className={menu === "wishlist" ? "active" : ""}>Wishlist{wishlistItems.length ? ` (${wishlistItems.length})` : ""}</Link></li>}
         </ul>
 
         {mobileOpen && (

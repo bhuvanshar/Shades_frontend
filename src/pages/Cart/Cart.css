@@ -1,3 +1,4 @@
+.cart-discount,.checkout-discount{color:#397048}.promo-success{position:relative;margin-top:10px;padding:11px 48px 11px 12px;border-left:3px solid #477253;background:#eaf3eb;color:#315b3c;font-size:11px}.promo-success strong,.promo-success span{display:block}.promo-success span{margin-top:3px}.promo-success button{position:absolute;right:10px;top:12px;border:0;background:none;color:#315b3c;font-size:10px;text-decoration:underline}.promo-error{margin-top:8px;color:#9a3932;font-size:11px}
 .cart {
   padding: 24px 0 100px;
 }

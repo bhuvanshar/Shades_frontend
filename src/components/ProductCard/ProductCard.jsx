@@ -1,15 +1,21 @@
 import React, { useContext } from "react";
 import "./ProductCard.css";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { assets } from "../../assets/assets";
 import { StoreContext } from "../../context/StoreContext";
+import { useAuth } from "../../context/AuthContext";
 
 const ProductCard = ({ id, name, price, image, color, isNew }) => {
-  const { cartItems, addToCart, removeFromCart } = useContext(StoreContext);
+  const { cartItems, addToCart, removeFromCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const count = cartItems[id] || 0;
+  const saved = isWishlisted(id);
+  const save = async () => { if (!user) return navigate("/signin"); try { await toggleWishlist(id); } catch (error) { window.alert(error.message); } };
 
   return (
     <div className="product-card">
+      <button className={`wishlist-heart ${saved ? "saved" : ""}`} onClick={save} aria-label={saved ? `Remove ${name} from wishlist` : `Add ${name} to wishlist`}>{saved ? "♥" : "♡"}</button>
       <Link to={`/product/${id}`} className="product-card-link">
         <div className="product-card-image">
           <img src={image} alt={name} />

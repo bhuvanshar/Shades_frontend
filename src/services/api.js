@@ -85,6 +85,12 @@ export const createCoupon = (accessToken, coupon) =>
     body: JSON.stringify(coupon),
   });
 
+export const validateCoupon = (accessToken, couponCode, orderAmount, itemQuantity) =>
+  authenticatedRequest("/coupons/validate", accessToken, {
+    method: "POST",
+    body: JSON.stringify({ couponCode, orderAmount, itemQuantity }),
+  });
+
 export const deactivateCoupon = async (accessToken, couponId) => {
   const response = await fetch(`${API_URL}/coupons/${couponId}`, {
     method: "DELETE",
@@ -174,6 +180,8 @@ export const getProductReviews = async (productId) => {
 
 export const getMyProductReview = (accessToken, productId) =>
   authenticatedRequest(`/reviews/products/${productId}/mine`, accessToken);
+export const getReviewableVariants = (accessToken, productId) =>
+  authenticatedRequest(`/reviews/products/${productId}/reviewable-variants`, accessToken);
 
 export const createReview = (accessToken, review) =>
   authenticatedRequest("/reviews", accessToken, { method: "POST", body: JSON.stringify(review) });
@@ -186,3 +194,13 @@ export const deleteReview = (accessToken, reviewId) =>
 
 export const getMyOrders = (accessToken) =>
   authenticatedRequest("/orders?size=100&sort=purchasedAt,desc", accessToken);
+
+export const getMyReturns = (accessToken) => authenticatedRequest("/returns?size=100", accessToken);
+export const createReturn = (accessToken, request) => authenticatedRequest("/returns", accessToken, { method: "POST", body: JSON.stringify(request) });
+export const cancelReturn = (accessToken, returnId) => authenticatedRequest(`/returns/${returnId}/cancel`, accessToken, { method: "PATCH" });
+export const getAdminReturns = (accessToken) => authenticatedRequest("/returns/admin/all?size=200", accessToken);
+export const updateReturnStatus = (accessToken, returnId, status, adminComments, itemConditions) => authenticatedRequest(`/returns/admin/${returnId}/status`, accessToken, { method: "PATCH", body: JSON.stringify({ status, adminComments, itemConditions }) });
+export const processRefund = (accessToken, paymentId, refundAmount, reason, returnId) => authenticatedRequest(`/refunds/payments/${paymentId}`, accessToken, { method: "POST", body: JSON.stringify({ refundAmount, reason, returnId }) });
+export const getWishlist = (accessToken) => authenticatedRequest("/wishlists", accessToken);
+export const addWishlistItem = (accessToken, productId) => authenticatedRequest(`/wishlists/items/${productId}`, accessToken, { method: "POST" });
+export const removeWishlistItem = (accessToken, productId) => authenticatedRequest(`/wishlists/items/${productId}`, accessToken, { method: "DELETE" });
