@@ -26,6 +26,24 @@ export const register = async ({ name, email, password, phoneNumber }) => {
   return parseResponse(response);
 };
 
+export const forgotPassword = async (email) => {
+  const response = await fetch(`${API_URL}/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  return parseResponse(response);
+};
+
+export const resetPassword = async (token, newPassword) => {
+  const response = await fetch(`${API_URL}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, newPassword }),
+  });
+  return parseResponse(response);
+};
+
 export const googleLogin = async (credential) => {
   const response = await fetch(`${API_URL}/auth/google`, {
     method: "POST",

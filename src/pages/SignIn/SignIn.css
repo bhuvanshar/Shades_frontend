@@ -34,6 +34,8 @@
 .signin-submit:hover:not(:disabled) { transform: translateY(-1px); }
 .signin-submit:disabled { opacity: .48; cursor: not-allowed; }
 .signin-error { padding: 12px 14px; border-left: 3px solid #a43e32; background: #f8eae7; color: #7d2e26; font-size: 13px; line-height: 1.4; }
+.signin-success { margin-bottom: 16px; padding: 12px 14px; border-left: 3px solid #55745a; background: #edf5ed; color: #315137; font-size: 13px; line-height: 1.4; }
+.password-visibility { display: block; margin: 10px 0 20px auto; }
 .signin-password-hint { margin: 7px 0 0; color: #7b7c75; font-size: 11px; }
 .signin-optional { color: #8a8b84; font-weight: 400; }
 .signin-create { margin: 24px 0 12px; color: #656760; font-size: 13px; text-align: center; }

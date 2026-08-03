@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import BrandWordmark from "../../components/BrandWordmark/BrandWordmark";
+import { forgotPassword, resetPassword } from "../../services/api";
 import "./SignIn.css";
 
 const SignIn = () => {
@@ -13,15 +14,19 @@ const SignIn = () => {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [googleStatus, setGoogleStatus] = useState("loading");
   const [submitting, setSubmitting] = useState(false);
   const { signIn, register, signInWithGoogle, isAuthenticated, isAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const resetToken = new URLSearchParams(location.search).get("resetToken") || "";
   const registering = mode === "register";
   const googleButtonRef = useRef(null);
   const googleClientId = process.env.REACT_APP_GOOGLE_CLIENT_ID
     || "654177765040-742kbr08fgphkafqnkigb84jnj78o2nj.apps.googleusercontent.com";
+
+  useEffect(() => { if (resetToken) setMode("reset"); }, [resetToken]);
 
   useEffect(() => {
     const renderGoogleButton = () => {
@@ -70,6 +75,7 @@ const SignIn = () => {
   const changeMode = (nextMode) => {
     setMode(nextMode);
     setError("");
+    setNotice("");
     setPassword("");
     setConfirmPassword("");
   };
@@ -96,6 +102,51 @@ const SignIn = () => {
   };
 
   const canSubmit = email && password && (!registering || (name.trim() && confirmPassword));
+
+  const handleRecovery = async (event) => {
+    event.preventDefault(); setError(""); setNotice(""); setSubmitting(true);
+    try {
+      if (mode === "forgot") {
+        const response = await forgotPassword(email.trim().toLowerCase());
+        setNotice(response.message);
+      } else {
+        if (password !== confirmPassword) throw new Error("Passwords do not match.");
+        const response = await resetPassword(resetToken, password);
+        setNotice(response.message);
+        navigate("/signin", { replace: true });
+        setTimeout(() => changeMode("signin"), 1200);
+      }
+    } catch (err) { setError(err.message || "Unable to reset your password."); }
+    finally { setSubmitting(false); }
+  };
+
+  if (mode === "forgot" || mode === "reset") return (
+    <main className="signin-page">
+      <section className="signin-story" aria-label="Shades World introduction">
+        <Link to="/" className="signin-brand"><BrandWordmark light /></Link>
+        <div className="signin-story-copy"><span className="signin-eyebrow">Secure account recovery</span><h1>A clear way back to your account.</h1><p>Reset links are private, expire after 30 minutes and can only be used once.</p></div>
+        <p className="signin-story-note">Shades World will never ask you to share your reset link.</p>
+      </section>
+      <section className="signin-panel"><div className="signin-card">
+        <div className="signin-mobile-brand"><BrandWordmark /></div>
+        <span className="signin-kicker">Account security</span>
+        <h2>{mode === "forgot" ? "Forgot password" : "Choose a new password"}</h2>
+        <p className="signin-intro">{mode === "forgot" ? "Enter your account email and we’ll send you a secure reset link." : "Use at least 8 characters for your new password."}</p>
+        <form onSubmit={handleRecovery} noValidate>
+          {error && <div className="signin-error" role="alert">{error}</div>}
+          {notice && <div className="signin-success" role="status">{notice}</div>}
+          {mode === "forgot" ? <><label htmlFor="recovery-email">Email address</label><input id="recovery-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" maxLength="255" required /></> : <>
+            <label htmlFor="reset-password">New password</label><input id="reset-password" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength="8" maxLength="100" required />
+            <label htmlFor="reset-confirm-password">Confirm new password</label><input id="reset-confirm-password" type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" minLength="8" maxLength="100" required />
+            <button type="button" className="signin-link password-visibility" onClick={() => setShowPassword((value) => !value)}>{showPassword ? "Hide passwords" : "Show passwords"}</button>
+          </>}
+          <button className="signin-submit" type="submit" disabled={submitting || (mode === "forgot" ? !email : !password || !confirmPassword)}>{submitting ? "Please wait…" : mode === "forgot" ? "Send reset link" : "Reset password"}</button>
+        </form>
+        <p className="signin-create"><button type="button" onClick={() => { navigate("/signin", { replace: true }); changeMode("signin"); }}>Back to sign in</button></p>
+        <Link to="/" className="signin-back">← Continue shopping as a guest</Link>
+      </div></section>
+    </main>
+  );
 
   return (
     <main className="signin-page">
@@ -152,7 +203,7 @@ const SignIn = () => {
 
             {!registering && <div className="signin-options">
               <label className="signin-remember"><input type="checkbox" /> <span>Remember this device</span></label>
-              <button type="button" className="signin-link" onClick={() => setError("Password recovery will be available soon.")}>Forgot password?</button>
+              <button type="button" className="signin-link" onClick={() => changeMode("forgot")}>Forgot password?</button>
             </div>}
 
             <button className="signin-submit" type="submit" disabled={submitting || !canSubmit}>
