@@ -1,7 +1,7 @@
 import React from "react";
 import "./Footer.css";
-import { assets } from "../../assets/assets";
 import BrandWordmark from "../BrandWordmark/BrandWordmark";
+import { Link } from "react-router-dom";
 
 const Footer = () => {
   return (
@@ -10,55 +10,45 @@ const Footer = () => {
         <div className="footer-col footer-brand">
           <BrandWordmark light />
           <p className="footer-tagline">
-            Premium eyewear designed in India for the bold and the curious.
+            Distinctive eyewear for the bold, the curious and the individual.
           </p>
-          <div className="footer-social">
-            <a href="#" aria-label="Facebook">
-              <img src={assets.facebook_icon} alt="" />
-            </a>
-            <a href="#" aria-label="Twitter">
-              <img src={assets.twitter_icon} alt="" />
-            </a>
-            <a href="#" aria-label="LinkedIn">
-              <img src={assets.linkedin_icon} alt="" />
-            </a>
-          </div>
+          <Link className="footer-story" to="/info/about">Our story →</Link>
         </div>
 
         <div className="footer-col">
           <h4>Shop</h4>
           <ul>
-            <li><a href="#shop">Sunglasses</a></li>
-            <li><a href="#shop">Blue Light</a></li>
-            <li><a href="#shop">Polarized</a></li>
-            <li><a href="#shop">New Arrivals</a></li>
+            <li><Link to="/#shop">All eyewear</Link></li>
+            <li><Link to="/#collections">Men</Link></li>
+            <li><Link to="/#collections">Women</Link></li>
+            <li><Link to="/#collections">Unisex</Link></li>
           </ul>
         </div>
 
         <div className="footer-col">
           <h4>Help</h4>
           <ul>
-            <li><a href="#">Shipping &amp; Returns</a></li>
-            <li><a href="#">FAQ</a></li>
-            <li><a href="#">Size Guide</a></li>
-            <li><a href="#">Contact Us</a></li>
+            <li><Link to="/info/shipping">Shipping &amp; Delivery</Link></li>
+            <li><Link to="/info/returns">Returns &amp; Refunds</Link></li>
+            <li><Link to="/info/faq">FAQ</Link></li>
+            <li><Link to="/info/size-guide">Size Guide</Link></li>
           </ul>
         </div>
 
         <div className="footer-col">
-          <h4>Newsletter</h4>
-          <p className="newsletter-desc">
-            Get 10% off your first order and stay updated on new drops.
-          </p>
-          <div className="newsletter-input">
-            <input type="email" placeholder="Your email" />
-            <button>Subscribe</button>
-          </div>
+          <h4>Information</h4>
+          <ul>
+            <li><Link to="/info/about">About us</Link></li>
+            <li><Link to="/info/contact">Contact us</Link></li>
+            <li><Link to="/info/privacy">Privacy policy</Link></li>
+            <li><Link to="/info/terms">Terms &amp; conditions</Link></li>
+          </ul>
         </div>
       </div>
 
       <div className="footer-bottom">
         <p>&copy; 2026 Shades World Barcelona. All rights reserved.</p>
+        <div><Link to="/info/privacy">Privacy</Link><Link to="/info/terms">Terms</Link></div>
       </div>
     </footer>
   );

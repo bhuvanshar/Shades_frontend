@@ -5,11 +5,12 @@ import { assets } from "../../assets/assets";
 import { StoreContext } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 
-const ProductCard = ({ id, name, price, image, color, isNew }) => {
+const ProductCard = ({ id, name, price, image, color, isNew, variantId, available = true }) => {
   const { cartItems, addToCart, removeFromCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
   const { user } = useAuth();
   const navigate = useNavigate();
-  const count = cartItems[id] || 0;
+  const cartKey = variantId ? `${id}:${variantId}` : String(id);
+  const count = cartItems[cartKey] || 0;
   const saved = isWishlisted(id);
   const save = async () => { if (!user) return navigate("/signin"); try { await toggleWishlist(id); } catch (error) { window.alert(error.message); } };
 
@@ -32,17 +33,17 @@ const ProductCard = ({ id, name, price, image, color, isNew }) => {
 
         <div className="product-card-actions">
           {count === 0 ? (
-            <button className="add-to-bag" onClick={() => addToCart(id)}>
-              Add to bag
+            <button className="add-to-bag" aria-label={available ? `Add ${name} to bag` : `${name} is out of stock`} disabled={!variantId || !available} onClick={() => addToCart(id, variantId)}>
+              {available ? "Add to bag" : "Out of stock"}
             </button>
           ) : (
             <div className="qty-control">
-              <button onClick={() => removeFromCart(id)}>
-                <img src={assets.remove_icon_red} alt="Remove" />
+              <button aria-label={`Decrease quantity of ${name}`} onClick={() => removeFromCart(id, variantId)}>
+                <img src={assets.remove_icon_red} alt="" />
               </button>
-              <span>{count}</span>
-              <button onClick={() => addToCart(id)}>
-                <img src={assets.add_icon_green} alt="Add" />
+              <span aria-live="polite" aria-label={`${count} in bag`}>{count}</span>
+              <button aria-label={`Increase quantity of ${name}`} onClick={() => addToCart(id, variantId)}>
+                <img src={assets.add_icon_green} alt="" />
               </button>
             </div>
           )}

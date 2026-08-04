@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { createCoupon, deactivateCoupon, getCoupons } from "../../services/api";
+import { createCoupon, getCoupons, setCouponActive, updateCoupon as updateCouponRequest } from "../../services/api";
 import AdminProducts from "./AdminProducts";
 import AdminOrders from "./AdminOrders";
 import AdminInventory from "./AdminInventory";
 import AdminCustomers from "./AdminCustomers";
 import AdminReturns from "./AdminReturns";
+import AdminEmailOutbox from "./AdminEmailOutbox";
+import AdminOverview from "./AdminOverview";
+import Notifications from "../Notifications/Notifications";
+import AdminReviews from "./AdminReviews";
 import "./AdminDashboard.css";
 
 const toLocalInput = (date) => {
@@ -40,6 +44,7 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [offer, setOffer] = useState(initialOffer);
+  const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -58,8 +63,6 @@ const AdminDashboard = () => {
   }, [accessToken]);
 
   useEffect(() => { loadOffers(); }, [loadOffers]);
-
-  const activeCount = useMemo(() => coupons.filter((coupon) => offerState(coupon) === "Active").length, [coupons]);
 
   const updateOffer = (field, value) => setOffer((current) => ({ ...current, [field]: value }));
 
@@ -88,11 +91,16 @@ const AdminDashboard = () => {
     };
     setSaving(true);
     try {
-      const created = await createCoupon(accessToken, payload);
-      setCoupons((current) => [created, ...current]);
+      const saved = editingId
+        ? await updateCouponRequest(accessToken, editingId, payload)
+        : await createCoupon(accessToken, payload);
+      setCoupons((current) => editingId
+        ? current.map((item) => item.couponId === saved.couponId ? saved : item)
+        : [saved, ...current]);
       setOffer(initialOffer());
+      setEditingId(null);
       setShowForm(false);
-      setNotice(`${created.couponCode} is ready to use.`);
+      setNotice(`${saved.couponCode} was ${editingId ? "updated" : "created"}.`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -100,50 +108,58 @@ const AdminDashboard = () => {
     }
   };
 
-  const deactivate = async (coupon) => {
-    if (!window.confirm(`Deactivate ${coupon.couponCode}? Customers will no longer be able to use it.`)) return;
+  const toggleActive = async (coupon) => {
+    const active = !coupon.isActive;
+    if (!window.confirm(`${active ? "Activate" : "Deactivate"} ${coupon.couponCode}?`)) return;
     setError("");
     try {
-      await deactivateCoupon(accessToken, coupon.couponId);
-      setCoupons((current) => current.map((item) => item.couponId === coupon.couponId ? { ...item, isActive: false } : item));
-      setNotice(`${coupon.couponCode} has been deactivated.`);
+      const updated = await setCouponActive(accessToken, coupon.couponId, active);
+      setCoupons((current) => current.map((item) => item.couponId === coupon.couponId ? updated : item));
+      setNotice(`${coupon.couponCode} has been ${active ? "activated" : "deactivated"}.`);
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const goToOffers = () => { setSection("offers"); setNotice(""); setError(""); };
+  const editOffer = (coupon) => {
+    setOffer({ couponCode: coupon.couponCode, description: coupon.description || "", discountType: coupon.discountType,
+      discountValue: String(coupon.discountValue), minimumOrderAmount: String(coupon.minimumOrderAmount || 0),
+      maximumDiscountAmount: coupon.maximumDiscountAmount == null ? "" : String(coupon.maximumDiscountAmount),
+      usageLimit: coupon.usageLimit == null ? "" : String(coupon.usageLimit),
+      usageLimitPerUser: coupon.usageLimitPerUser == null ? "" : String(coupon.usageLimitPerUser),
+      validFrom: String(coupon.validFrom).slice(0, 16), validTo: String(coupon.validTo).slice(0, 16) });
+    setEditingId(coupon.couponId); setShowForm(true); setError(""); setNotice("");
+  };
+
+  const navigateSection = (nextSection) => {
+    setSection(nextSection);
+    setNotice("");
+    setError("");
+  };
+  const goToOffers = () => navigateSection("offers");
 
   return (
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-wordmark">SHADES <span>WORLD</span></div>
         <nav aria-label="Admin navigation">
-          <button className={section === "overview" ? "active" : ""} onClick={() => setSection("overview")}>Overview</button>
+          <button className={section === "overview" ? "active" : ""} onClick={() => navigateSection("overview")}>Overview</button>
           <button className={section === "offers" ? "active" : ""} onClick={goToOffers}>Offers</button>
-          <button className={section === "products" ? "active" : ""} onClick={() => { setSection("products"); setError(""); setNotice(""); }}>Products</button><button className={section === "orders" ? "active" : ""} onClick={() => { setSection("orders"); setError(""); setNotice(""); }}>Orders</button><button className={section === "returns" ? "active" : ""} onClick={() => setSection("returns")}>Returns & refunds</button><button className={section === "inventory" ? "active" : ""} onClick={() => setSection("inventory")}>Inventory</button><button className={section === "customers" ? "active" : ""} onClick={() => setSection("customers")}>Customers</button>
+          <button className={section === "products" ? "active" : ""} onClick={() => { setSection("products"); setError(""); setNotice(""); }}>Products</button><button className={section === "orders" ? "active" : ""} onClick={() => { setSection("orders"); setError(""); setNotice(""); }}>Orders</button><button className={section === "returns" ? "active" : ""} onClick={() => setSection("returns")}>Returns & refunds</button><button className={section === "inventory" ? "active" : ""} onClick={() => setSection("inventory")}>Inventory</button><button className={section === "customers" ? "active" : ""} onClick={() => setSection("customers")}>Customers</button><button className={section === "reviews" ? "active" : ""} onClick={() => navigateSection("reviews")}>Review moderation</button><button className={section === "notifications" ? "active" : ""} onClick={() => navigateSection("notifications")}>Notifications</button><button className={section === "email-outbox" ? "active" : ""} onClick={() => setSection("email-outbox")}>Email outbox</button>
         </nav>
         <button className="admin-signout" onClick={signOut}>Sign out</button>
       </aside>
 
       <main className="admin-main">
-        <header className="admin-header"><div><span>Store administration</span><h1>{section === "offers" ? "Offers & coupons" : section === "products" ? "Product catalog" : section === "orders" ? "Order operations" : section === "returns" ? "Returns & refunds" : section === "inventory" ? "Stock operations" : section === "customers" ? "Customer management" : `Good day, ${user?.name?.split(" ")[0]}.`}</h1></div><div className="admin-avatar">{user?.name?.charAt(0)?.toUpperCase()}</div></header>
+        <header className="admin-header"><div><span>Store administration</span><h1>{section === "offers" ? "Offers & coupons" : section === "products" ? "Product catalog" : section === "orders" ? "Order operations" : section === "returns" ? "Returns & refunds" : section === "inventory" ? "Stock operations" : section === "customers" ? "Customer management" : section === "reviews" ? "Review moderation" : section === "notifications" ? "Notification centre" : section === "email-outbox" ? "Email operations" : `Good day, ${user?.name?.split(" ")[0]}.`}</h1></div><div className="admin-avatar">{user?.name?.charAt(0)?.toUpperCase()}</div></header>
         {error && <div className="admin-alert error" role="alert">{error}</div>}
         {notice && <div className="admin-alert success" role="status">{notice}</div>}
 
-        {section === "overview" ? <>
-          <section className="admin-hero"><div><span>Offers workspace</span><h2>Turn a good collection into an irresistible one.</h2><p>Create seasonal offers, coupon campaigns and product promotions from one place.</p></div><button onClick={() => { goToOffers(); setShowForm(true); }}>+ Create offer</button></section>
-          <section className="admin-stats">
-            <article><span>Active offers</span><strong>{loading ? "—" : activeCount}</strong><p>Available to customers now</p></article>
-            <article><span>Total campaigns</span><strong>{loading ? "—" : coupons.length}</strong><p>Active, scheduled and archived</p></article>
-            <article><span>Scheduled</span><strong>{loading ? "—" : coupons.filter((c) => offerState(c) === "Scheduled").length}</strong><p>Launching in the future</p></article>
-          </section>
-          <section className="admin-empty"><div className="admin-empty-icon">%</div><div><h3>Manage customer offers</h3><p>Create discount codes, set spending thresholds and control usage limits.</p></div><button onClick={goToOffers}>View offers</button></section>
-        </> : section === "offers" ? <>
-          <div className="offers-toolbar"><div><p>Create and control the codes customers use at checkout.</p></div><button onClick={() => { setShowForm((value) => !value); setError(""); }}>{showForm ? "Close form" : "+ New offer"}</button></div>
+        {section === "overview" ? <AdminOverview coupons={coupons} offersLoading={loading} onNavigate={navigateSection} onNewOffer={() => { goToOffers(); setShowForm(true); }} /> : section === "offers" ? <>
+          <div className="offers-toolbar"><div><p>Create and control the codes customers use at checkout.</p></div><button onClick={() => { setShowForm((value) => !value); setEditingId(null); setOffer(initialOffer()); setError(""); }}>{showForm ? "Close form" : "+ New offer"}</button></div>
 
           {showForm && <form className="offer-form" onSubmit={submitOffer}>
-            <div className="offer-form-heading"><div><span>New campaign</span><h2>Create an offer</h2></div><p>Fields marked * are required.</p></div>
+            <div className="offer-form-heading"><div><span>{editingId ? "Campaign settings" : "New campaign"}</span><h2>{editingId ? "Edit offer" : "Create an offer"}</h2></div><p>Fields marked * are required.</p></div>
             <div className="offer-form-grid">
               <label>Coupon code *<input value={offer.couponCode} onChange={(e) => updateOffer("couponCode", e.target.value)} placeholder="SUMMER25" maxLength="50" required /></label>
               <label>Description<input value={offer.description} onChange={(e) => updateOffer("description", e.target.value)} placeholder="Summer collection promotion" maxLength="255" /></label>
@@ -157,7 +173,7 @@ const AdminDashboard = () => {
               <label>Total usage limit<input type="number" min="1" value={offer.usageLimit} onChange={(e) => updateOffer("usageLimit", e.target.value)} placeholder="Unlimited" /></label>
               <label>Uses per customer<input type="number" min="1" value={offer.usageLimitPerUser} onChange={(e) => updateOffer("usageLimitPerUser", e.target.value)} placeholder="Unlimited" /></label>
             </div>
-            <div className="offer-form-actions"><button type="button" onClick={() => { setShowForm(false); setOffer(initialOffer()); }}>Cancel</button><button type="submit" disabled={saving}>{saving ? "Creating..." : "Publish offer"}</button></div>
+            <div className="offer-form-actions"><button type="button" onClick={() => { setShowForm(false); setEditingId(null); setOffer(initialOffer()); }}>Cancel</button><button type="submit" disabled={saving}>{saving ? "Saving..." : editingId ? "Save changes" : "Publish offer"}</button></div>
           </form>}
 
           <section className="offers-list">
@@ -169,11 +185,11 @@ const AdminDashboard = () => {
                 <div><small>Minimum spend</small><strong>₹{coupon.minimumOrderAmount || 0}</strong></div>
                 <div><small>Valid until</small><strong>{new Date(coupon.validTo).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</strong></div>
                 <span className={`offer-status ${state.toLowerCase()}`}>{state}</span>
-                <button className="offer-action" disabled={!coupon.isActive} onClick={() => deactivate(coupon)}>{coupon.isActive ? "Deactivate" : "Archived"}</button>
+                <div className="offer-actions"><button className="offer-action" onClick={() => editOffer(coupon)}>Edit</button><button className="offer-action" onClick={() => toggleActive(coupon)}>{coupon.isActive ? "Deactivate" : "Activate"}</button></div>
               </article>;
             })}
           </section>
-        </> : section === "products" ? <AdminProducts /> : section === "orders" ? <AdminOrders /> : section === "returns" ? <AdminReturns /> : section === "inventory" ? <AdminInventory /> : <AdminCustomers />}
+        </> : section === "products" ? <AdminProducts /> : section === "orders" ? <AdminOrders /> : section === "returns" ? <AdminReturns /> : section === "inventory" ? <AdminInventory /> : section === "customers" ? <AdminCustomers /> : section === "reviews" ? <AdminReviews /> : section === "notifications" ? <Notifications embedded onAdminNavigate={navigateSection} /> : <AdminEmailOutbox />}
       </main>
     </div>
   );

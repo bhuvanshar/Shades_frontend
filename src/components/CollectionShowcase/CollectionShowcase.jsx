@@ -1,5 +1,6 @@
 import React from "react";
 import "./CollectionShowcase.css";
+import { Link } from "react-router-dom";
 
 const CollectionShowcase = ({ setCategory }) => {
   return (
@@ -7,7 +8,7 @@ const CollectionShowcase = ({ setCategory }) => {
       <div className="container">
         <h2 className="collections-heading">Collections</h2>
         <div className="collections-grid">
-          <div
+          <Link to="/#shop"
             className="collection-card"
             onClick={() => setCategory("Polarized")}
           >
@@ -18,9 +19,9 @@ const CollectionShowcase = ({ setCategory }) => {
               <p>Maximum clarity. Reduced glare. Pure vision.</p>
               <span className="collection-link">Shop polarized →</span>
             </div>
-          </div>
+          </Link>
 
-          <div
+          <Link to="/#shop"
             className="collection-card"
             onClick={() => setCategory("Blue Light")}
           >
@@ -31,7 +32,7 @@ const CollectionShowcase = ({ setCategory }) => {
               <p>Protect your eyes during long screen sessions.</p>
               <span className="collection-link">Shop blue light →</span>
             </div>
-          </div>
+          </Link>
         </div>
       </div>
     </section>

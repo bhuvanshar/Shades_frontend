@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
-import { createShipment, getAdminOrders, updateAdminOrderStatus, updateShipmentStatus } from "../../services/api";
+import { createShipment, downloadInvoice, getAdminOrders, updateAdminOrderStatus, updateShipmentStatus } from "../../services/api";
 import "./AdminOrders.css";
+import "./ShipmentTracking.css";
+import "./InvoiceActions.css";
 
 const nextStatus = { PLACED: "CONFIRMED", CONFIRMED: "PROCESSING", PROCESSING: "SHIPPED", SHIPPED: "DELIVERED" };
 const actionLabel = { CONFIRMED: "Confirm order", PROCESSING: "Start processing", SHIPPED: "Mark shipped", DELIVERED: "Mark delivered" };
+const shipmentActions = {
+  PENDING: [{ status: "PACKED", label: "Mark packed" }, { status: "FAILED", label: "Report issue" }],
+  PACKED: [{ status: "SHIPPED", label: "Dispatch" }, { status: "FAILED", label: "Report issue" }],
+  SHIPPED: [{ status: "IN_TRANSIT", label: "Mark in transit" }, { status: "FAILED", label: "Report issue" }],
+  IN_TRANSIT: [{ status: "OUT_FOR_DELIVERY", label: "Out for delivery" }, { status: "FAILED", label: "Report issue" }],
+  OUT_FOR_DELIVERY: [{ status: "DELIVERED", label: "Mark delivered" }, { status: "FAILED", label: "Report issue" }],
+  FAILED: [{ status: "IN_TRANSIT", label: "Resume transit" }],
+  DELIVERED: [{ status: "RETURNED", label: "Mark returned" }],
+};
 const money = (value) => `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 const date = (value) => value ? new Date(value).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—";
+const label = (value) => String(value || "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 export default function AdminOrders() {
   const { accessToken } = useAuth();
@@ -19,7 +31,8 @@ export default function AdminOrders() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [notes, setNotes] = useState("");
-  const [shipment, setShipment] = useState({ shippingProvider: "", trackingNumber: "" });
+  const [shipment, setShipment] = useState({ shippingProvider: "", trackingNumber: "", expectedDeliveryAt: "" });
+  const [downloadingInvoice, setDownloadingInvoice] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -45,13 +58,19 @@ export default function AdminOrders() {
   };
   const addShipment = async (event) => {
     event.preventDefault(); setSaving(true); setError("");
-    try { await createShipment(accessToken, selected.orderId, shipment); await load(); setSelected((current) => ({ ...current, orderStatus: "PROCESSING" })); setShipment({ shippingProvider: "", trackingNumber: "" }); setNotice("Shipment and tracking details added."); }
+    try { const created = await createShipment(accessToken, selected.orderId, { ...shipment, expectedDeliveryAt: shipment.expectedDeliveryAt || null }); const apply = (order) => ({ ...order, orderStatus: order.orderStatus === "CONFIRMED" ? "PROCESSING" : order.orderStatus, shipments: [{ ...created, provider: created.shippingProvider, status: created.shipmentStatus }, ...(order.shipments || [])] }); setSelected((current) => apply(current)); setOrders((current) => current.map((order) => order.orderId === selected.orderId ? apply(order) : order)); setShipment({ shippingProvider: "", trackingNumber: "", expectedDeliveryAt: "" }); setNotice("Shipment and tracking details added."); }
     catch (err) { setError(err.message); } finally { setSaving(false); }
   };
   const shipmentProgress = async (item, next) => {
     setSaving(true); setError("");
-    try { await updateShipmentStatus(accessToken, item.shipmentId, next); await load(); setSelected(null); setNotice(`Shipment marked ${next.toLowerCase().replaceAll("_", " ")}.`); }
+    try { const updated = await updateShipmentStatus(accessToken, item.shipmentId, next); const apply = (order) => ({ ...order, orderStatus: next === "SHIPPED" ? "SHIPPED" : next === "DELIVERED" ? "DELIVERED" : order.orderStatus, shipments: (order.shipments || []).map((entry) => entry.shipmentId === updated.shipmentId ? { ...updated, provider: updated.shippingProvider, status: updated.shipmentStatus } : entry) }); setSelected((current) => apply(current)); setOrders((current) => current.map((order) => order.orderId === selected.orderId ? apply(order) : order)); setNotice(`Shipment marked ${next.toLowerCase().replaceAll("_", " ")}.`); }
     catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  const getInvoice = async () => {
+    setDownloadingInvoice(true); setError("");
+    try { await downloadInvoice(accessToken, selected.orderId, true); }
+    catch (err) { setError(err.message); }
+    finally { setDownloadingInvoice(false); }
   };
 
   return <section className="orders-admin">
@@ -64,11 +83,11 @@ export default function AdminOrders() {
     </div>
 
     {selected && <div className="order-drawer-backdrop" onMouseDown={() => setSelected(null)}><aside className="order-drawer" onMouseDown={(e) => e.stopPropagation()}><header><div><span>Order #{selected.orderId}</span><h2>{selected.customer?.name}</h2><p>{date(selected.purchasedAt)}</p></div><button onClick={() => setSelected(null)}>×</button></header>
-      <div className="drawer-status"><em className={`order-badge ${selected.orderStatus.toLowerCase()}`}>{selected.orderStatus}</em><strong>{money(selected.totalAmount)}</strong></div>
+      <div className="drawer-status"><em className={`order-badge ${selected.orderStatus.toLowerCase()}`}>{selected.orderStatus}</em><strong>{money(selected.totalAmount)}</strong>{selected.payments?.some((payment) => ["PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(payment.status)) && <button className="admin-invoice-button" disabled={downloadingInvoice} onClick={getInvoice}>{downloadingInvoice ? "Preparing…" : "Download invoice"}</button>}</div>
       <section><h3>Items</h3>{selected.items?.map((item) => <div className="drawer-item" key={item.orderItemId}><div><strong>{item.productName}</strong><small>{item.sku} · {item.quantity} × {money(item.unitPrice)}</small></div><b>{money(item.lineTotal)}</b></div>)}</section>
       <section><h3>Shipping address</h3><p>{selected.shippingAddress?.name} · {selected.shippingAddress?.phone}<br />{selected.shippingAddress?.line1}{selected.shippingAddress?.line2 && `, ${selected.shippingAddress.line2}`}<br />{selected.shippingAddress?.city}, {selected.shippingAddress?.state} {selected.shippingAddress?.pincode}<br />{selected.shippingAddress?.country}</p></section>
       <section><h3>Payment</h3>{selected.payments?.length ? selected.payments.map((p) => <div className="detail-line" key={p.paymentId}><span>{p.method} · {p.provider || "Store"}</span><b>{p.status}</b></div>) : <p>No payment record yet.</p>}</section>
-      <section><h3>Shipment</h3>{selected.shipments?.map((s) => <div className="shipment-card" key={s.shipmentId}><div><strong>{s.provider || "Courier pending"}</strong><small>{s.trackingNumber || "No tracking number"} · {s.status}</small></div>{s.status === "PENDING" && <button disabled={saving} onClick={() => shipmentProgress(s, "SHIPPED")}>Mark shipped</button>}{s.status === "SHIPPED" && <button disabled={saving} onClick={() => shipmentProgress(s, "DELIVERED")}>Mark delivered</button>}</div>)}{selected.shipments?.length === 0 && ["CONFIRMED", "PROCESSING"].includes(selected.orderStatus) && <form className="shipment-form" onSubmit={addShipment}><input placeholder="Courier" value={shipment.shippingProvider} onChange={(e) => setShipment({ ...shipment, shippingProvider: e.target.value })} required /><input placeholder="Tracking number" value={shipment.trackingNumber} onChange={(e) => setShipment({ ...shipment, trackingNumber: e.target.value })} required /><button disabled={saving}>Add shipment</button></form>}</section>
+      <section><h3>Shipment & delivery</h3>{selected.shipments?.map((s) => { const shipmentStatus = s.status || s.shipmentStatus; return <div className="shipment-card" key={s.shipmentId}><div><strong>{s.provider || s.shippingProvider || "Courier pending"}</strong><small>{s.trackingNumber || "No tracking number"} · {label(shipmentStatus)}</small>{s.expectedDeliveryAt && <small>Expected {date(s.expectedDeliveryAt)}</small>}</div><div className="shipment-actions">{(shipmentActions[shipmentStatus] || []).map((action) => <button className={action.status === "FAILED" ? "shipment-issue" : ""} key={action.status} disabled={saving} onClick={() => shipmentProgress(s, action.status)}>{action.label}</button>)}</div></div>})}{selected.shipments?.length === 0 && ["CONFIRMED", "PROCESSING"].includes(selected.orderStatus) && <form className="shipment-form" onSubmit={addShipment}><input placeholder="Courier" maxLength="100" value={shipment.shippingProvider} onChange={(e) => setShipment({ ...shipment, shippingProvider: e.target.value })} required /><input placeholder="Tracking number" maxLength="255" value={shipment.trackingNumber} onChange={(e) => setShipment({ ...shipment, trackingNumber: e.target.value })} required /><label>Expected delivery<input type="datetime-local" min={new Date(Date.now() + 60000).toISOString().slice(0,16)} value={shipment.expectedDeliveryAt} onChange={(e) => setShipment({ ...shipment, expectedDeliveryAt: e.target.value })} /></label><button disabled={saving}>Add shipment</button></form>}</section>
       <section><h3>Status history</h3><div className="order-timeline">{selected.history?.map((h, index) => <div key={`${h.changedAt}-${index}`}><i></i><span><b>{h.newStatus}</b><small>{h.notes || "Status updated"} · {date(h.changedAt)}</small></span></div>)}</div></section>
       {nextStatus[selected.orderStatus] && <footer><textarea rows="2" placeholder="Internal status note (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} /><button disabled={saving} onClick={progress}>{saving ? "Saving…" : actionLabel[nextStatus[selected.orderStatus]]}</button></footer>}
     </aside></div>}

@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React from "react";
+import { useSearchParams } from "react-router-dom";
 import "./Home.css";
 import Hero from "../../components/Hero/Hero";
 import CategoryFilter from "../../components/CategoryFilter/CategoryFilter";
@@ -7,7 +8,14 @@ import CollectionShowcase from "../../components/CollectionShowcase/CollectionSh
 import TrustStrip from "../../components/TrustStrip/TrustStrip";
 
 const Home = () => {
-  const [category, setCategory] = useState("All");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedCategory = searchParams.get("category") || "All";
+  const category = ["All", "Men", "Women", "Unisex", "Accessory"].includes(requestedCategory) ? requestedCategory : "All";
+  const setCategory = (value) => {
+    const next = new URLSearchParams(searchParams);
+    value === "All" ? next.delete("category") : next.set("category", value);
+    setSearchParams(next, { replace: true });
+  };
 
   return (
     <div className="home">

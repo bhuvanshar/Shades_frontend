@@ -13,6 +13,7 @@ const CategoryFilter = ({ category, setCategory }) => {
             <button
               key={cat}
               onClick={() => setCategory(cat)}
+              aria-pressed={category === cat}
               className={`category-pill ${category === cat ? "active" : ""}`}
             >
               {cat}

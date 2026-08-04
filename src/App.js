@@ -13,6 +13,9 @@ import ProtectedRoute from "./components/ProtectedRoute/ProtectedRoute";
 import { useAuth } from "./context/AuthContext";
 import MyOrders from "./pages/MyOrders/MyOrders";
 import Wishlist from "./pages/Wishlist/Wishlist";
+import Account from "./pages/Account/Account";
+import Notifications from "./pages/Notifications/Notifications";
+import StoreInfo from "./pages/StoreInfo/StoreInfo";
 
 const ScrollToTop = () => {
   const { pathname, hash } = useLocation();
@@ -61,7 +64,7 @@ const AdminExitGuard = () => {
 
 const App = () => {
   return (
-    <><ScrollToTop /><AdminExitGuard /><Routes>
+    <><a className="skip-link" href="#main-content">Skip to main content</a><ScrollToTop /><AdminExitGuard /><div id="main-content" tabIndex="-1"><Routes>
       <Route path="/signin" element={<SignIn />} />
       <Route path="/admin" element={<ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>} />
       <Route path="*" element={<>
@@ -72,9 +75,12 @@ const App = () => {
           <Route path="/product/:id" element={<ProductDetail />} />
           <Route path="/my-orders" element={<ProtectedRoute><MyOrders /></ProtectedRoute>} />
           <Route path="/wishlist" element={<ProtectedRoute><Wishlist /></ProtectedRoute>} />
+          <Route path="/account" element={<ProtectedRoute customerOnly><Account /></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute customerOnly><Notifications /></ProtectedRoute>} />
+          <Route path="/info/:page" element={<StoreInfo />} />
         </Routes></div><Footer />
       </>} />
-    </Routes></>
+    </Routes></div></>
   );
 };
 

@@ -4,7 +4,7 @@ import "./TrustStrip.css";
 const features = [
   { icon: "☀️", title: "UV400 Protection", desc: "Full UVA & UVB blocking" },
   { icon: "◎", title: "Polarized Lenses", desc: "Reduced glare, true colour" },
-  { icon: "✦", title: "Free Shipping", desc: "On orders over ₹1500" },
+  { icon: "✦", title: "Free Shipping", desc: "On orders of ₹500 or more" },
   { icon: "↺", title: "30-Day Returns", desc: "No questions asked" },
 ];
 

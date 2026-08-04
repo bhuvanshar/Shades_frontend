@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import BrandWordmark from "../../components/BrandWordmark/BrandWordmark";
-import { forgotPassword, resetPassword } from "../../services/api";
+import { forgotPassword, resendVerification, resetPassword, verifyEmail } from "../../services/api";
 import "./SignIn.css";
 
 const SignIn = () => {
@@ -21,12 +21,25 @@ const SignIn = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const resetToken = new URLSearchParams(location.search).get("resetToken") || "";
+  const verifyToken = new URLSearchParams(location.search).get("verifyToken") || "";
   const registering = mode === "register";
   const googleButtonRef = useRef(null);
+  const verificationStartedRef = useRef(false);
   const googleClientId = process.env.REACT_APP_GOOGLE_CLIENT_ID
     || "654177765040-742kbr08fgphkafqnkigb84jnj78o2nj.apps.googleusercontent.com";
 
   useEffect(() => { if (resetToken) setMode("reset"); }, [resetToken]);
+
+  useEffect(() => {
+    if (!verifyToken || verificationStartedRef.current) return undefined;
+    verificationStartedRef.current = true;
+    setMode("verify"); setError(""); setNotice(""); setSubmitting(true);
+    verifyEmail(verifyToken)
+      .then((response) => setNotice(response.message))
+      .catch((err) => setError(err.message || "Unable to verify this email address."))
+      .finally(() => setSubmitting(false));
+    return undefined;
+  }, [verifyToken]);
 
   useEffect(() => {
     const renderGoogleButton = () => {
@@ -70,7 +83,12 @@ const SignIn = () => {
     return () => window.clearInterval(timer);
   }, [googleClientId, navigate, registering, signInWithGoogle]);
 
-  if (isAuthenticated) return <Navigate to={isAdmin ? "/admin" : "/"} replace />;
+  // Recovery links must remain usable even if this browser still has an
+  // authenticated cookie. Otherwise opening the email redirects customers to
+  // the storefront before the reset form can read its one-time token.
+  if (isAuthenticated && !resetToken && !verifyToken) {
+    return <Navigate to={isAdmin ? "/admin" : "/"} replace />;
+  }
 
   const changeMode = (nextMode) => {
     setMode(nextMode);
@@ -89,16 +107,31 @@ const SignIn = () => {
     }
     setSubmitting(true);
     try {
-      const user = registering
-        ? await register({ name, email, phoneNumber, password })
-        : await signIn(email, password);
+      if (registering) {
+        const response = await register({ name, email, phoneNumber, password });
+        setMode("signin"); setPassword(""); setConfirmPassword("");
+        setNotice(response.message || "Account created. Check your email to verify your account.");
+        return;
+      }
+      const user = await signIn(email, password);
       const requestedPath = location.state?.from?.pathname;
-      navigate(user.roles?.includes("ADMIN") ? "/admin" : registering ? "/" : requestedPath || "/", { replace: true });
+      navigate(user.roles?.includes("ADMIN") ? "/admin" : requestedPath || "/", { replace: true });
     } catch (err) {
       setError(err.message || (registering ? "Unable to create your account." : "Unable to sign in."));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleResendVerification = async () => {
+    setError(""); setNotice("");
+    if (!email.trim()) { setError("Enter your email address first."); return; }
+    setSubmitting(true);
+    try {
+      const response = await resendVerification(email.trim().toLowerCase());
+      setNotice(response.message);
+    } catch (err) { setError(err.message || "Unable to send a verification email."); }
+    finally { setSubmitting(false); }
   };
 
   const canSubmit = email && password && (!registering || (name.trim() && confirmPassword));
@@ -120,19 +153,19 @@ const SignIn = () => {
     finally { setSubmitting(false); }
   };
 
-  if (mode === "forgot" || mode === "reset") return (
+  if (mode === "forgot" || mode === "reset" || mode === "verify") return (
     <main className="signin-page">
       <section className="signin-story" aria-label="Shades World introduction">
         <Link to="/" className="signin-brand"><BrandWordmark light /></Link>
-        <div className="signin-story-copy"><span className="signin-eyebrow">Secure account recovery</span><h1>A clear way back to your account.</h1><p>Reset links are private, expire after 30 minutes and can only be used once.</p></div>
-        <p className="signin-story-note">Shades World will never ask you to share your reset link.</p>
+        <div className="signin-story-copy"><span className="signin-eyebrow">{mode === "verify" ? "Secure email verification" : "Secure account recovery"}</span><h1>{mode === "verify" ? "Confirm the view is yours." : "A clear way back to your account."}</h1><p>{mode === "verify" ? "Verification links are private, expire after 24 hours and can only be used once." : "Reset links are private, expire after 30 minutes and can only be used once."}</p></div>
+        <p className="signin-story-note">Shades World will never ask you to share a private account link.</p>
       </section>
       <section className="signin-panel"><div className="signin-card">
         <div className="signin-mobile-brand"><BrandWordmark /></div>
         <span className="signin-kicker">Account security</span>
-        <h2>{mode === "forgot" ? "Forgot password" : "Choose a new password"}</h2>
-        <p className="signin-intro">{mode === "forgot" ? "Enter your account email and we’ll send you a secure reset link." : "Use at least 8 characters for your new password."}</p>
-        <form onSubmit={handleRecovery} noValidate>
+        <h2>{mode === "forgot" ? "Forgot password" : mode === "verify" ? "Verify your email" : "Choose a new password"}</h2>
+        <p className="signin-intro">{mode === "forgot" ? "Enter your account email and we’ll send you a secure reset link." : mode === "verify" ? "We are securely checking your one-time verification link." : "Use at least 8 characters for your new password."}</p>
+        {mode === "verify" ? <div aria-live="polite">{submitting && <p>Verifying your email…</p>}{error && <div className="signin-error" role="alert">{error}</div>}{notice && <div className="signin-success" role="status">{notice}</div>}</div> : <form onSubmit={handleRecovery} noValidate>
           {error && <div className="signin-error" role="alert">{error}</div>}
           {notice && <div className="signin-success" role="status">{notice}</div>}
           {mode === "forgot" ? <><label htmlFor="recovery-email">Email address</label><input id="recovery-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" maxLength="255" required /></> : <>
@@ -141,7 +174,7 @@ const SignIn = () => {
             <button type="button" className="signin-link password-visibility" onClick={() => setShowPassword((value) => !value)}>{showPassword ? "Hide passwords" : "Show passwords"}</button>
           </>}
           <button className="signin-submit" type="submit" disabled={submitting || (mode === "forgot" ? !email : !password || !confirmPassword)}>{submitting ? "Please wait…" : mode === "forgot" ? "Send reset link" : "Reset password"}</button>
-        </form>
+        </form>}
         <p className="signin-create"><button type="button" onClick={() => { navigate("/signin", { replace: true }); changeMode("signin"); }}>Back to sign in</button></p>
         <Link to="/" className="signin-back">← Continue shopping as a guest</Link>
       </div></section>
@@ -163,9 +196,9 @@ const SignIn = () => {
       <section className="signin-panel">
         <div className="signin-card">
           <div className="signin-mobile-brand"><BrandWordmark /></div>
-          <div className="signin-tabs" role="tablist" aria-label="Account access">
-            <button type="button" role="tab" aria-selected={!registering} className={!registering ? "active" : ""} onClick={() => changeMode("signin")}>Sign in</button>
-            <button type="button" role="tab" aria-selected={registering} className={registering ? "active" : ""} onClick={() => changeMode("register")}>Create account</button>
+          <div className="signin-tabs" aria-label="Account access">
+            <button type="button" aria-pressed={!registering} className={!registering ? "active" : ""} onClick={() => changeMode("signin")}>Sign in</button>
+            <button type="button" aria-pressed={registering} className={registering ? "active" : ""} onClick={() => changeMode("register")}>Create account</button>
           </div>
           <span className="signin-kicker">{registering ? "Join Shades World" : "Your account"}</span>
           <h2>{registering ? "Create account" : "Sign in"}</h2>
@@ -180,6 +213,7 @@ const SignIn = () => {
 
           <form onSubmit={handleSubmit} noValidate>
             {error && <div className="signin-error" role="alert">{error}</div>}
+            {notice && <div className="signin-success" role="status">{notice}</div>}
             {registering && <>
               <label htmlFor="register-name">Full name</label>
               <input id="register-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="Your full name" maxLength="255" required />
@@ -210,6 +244,7 @@ const SignIn = () => {
               {submitting ? (registering ? "Creating account..." : "Signing in...") : (registering ? "Create customer account" : "Continue")}
             </button>
           </form>
+          {!registering && <p className="signin-create">Didn’t receive the verification email? <button type="button" disabled={submitting} onClick={handleResendVerification}>Resend verification</button></p>}
           <p className="signin-create">{registering ? "Already have an account?" : "New to Shades World?"} <button type="button" onClick={() => changeMode(registering ? "signin" : "register")}>{registering ? "Sign in" : "Create an account"}</button></p>
           <Link to="/" className="signin-back">← Continue shopping as a guest</Link>
         </div>

@@ -9,7 +9,7 @@ const PromoBar = () => {
   return (
     <div className="promo-bar">
       <p>
-        Free shipping on orders over ₹1500 &nbsp;·&nbsp; 30-day easy returns
+        Free shipping on orders of ₹500 or more &nbsp;·&nbsp; 30-day easy returns
       </p>
       <button className="promo-close" onClick={() => setVisible(false)} aria-label="Close">
         ✕

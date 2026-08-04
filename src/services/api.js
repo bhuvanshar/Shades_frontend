@@ -1,24 +1,74 @@
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8080/api";
+let csrfToken = null;
+let csrfPromise = null;
+let refreshPromise = null;
 
 const parseResponse = async (response) => {
-  const payload = await response.json().catch(() => null);
+  let payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.message || "Something went wrong. Please try again.");
+    const error = new Error(payload?.message || "Something went wrong. Please try again.");
+    error.status = response.status;
+    throw error;
   }
+  if (payload?.content && payload?.page) payload = { ...payload, ...payload.page };
   return payload;
 };
 
+const csrf = async (force = false) => {
+  if (force) csrfToken = null;
+  if (csrfToken) return csrfToken;
+  // One CSRF response sets both the readable cookie and the value used in the
+  // request header. Concurrent fetches can return different tokens, so all
+  // callers must share the same in-flight request.
+  if (!csrfPromise) {
+    csrfPromise = fetch(`${API_URL}/auth/csrf`, { credentials: "include" })
+      .then(parseResponse)
+      .then((payload) => {
+        csrfToken = payload.token;
+        return csrfToken;
+      })
+      .finally(() => { csrfPromise = null; });
+  }
+  return csrfPromise;
+};
+
+const request = async (path, options = {}) => {
+  const method = (options.method || "GET").toUpperCase();
+  const headers = { ...(options.headers || {}) };
+  const retryUnauthorizedCsrf = options.retryUnauthorizedCsrf === true;
+  const fetchOptions = { ...options };
+  delete fetchOptions.retryUnauthorizedCsrf;
+  const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
+  // Spring may replace the readable CSRF cookie after an unsafe response.
+  // Synchronize immediately before every write instead of reusing a token
+  // cached by an earlier profile/preferences save.
+  if (unsafe) headers["X-XSRF-TOKEN"] = await csrf(true);
+  const send = () => fetch(`${API_URL}${path}`, { ...fetchOptions, headers: { ...headers }, credentials: "include" });
+  let response = await send();
+  // Depending on where rejection occurs in the security chain, a stale CSRF
+  // pair can surface as either 401 or 403. Re-synchronize once before treating
+  // a 401 as an expired access token.
+  if (unsafe && (response.status === 403 || (response.status === 401 && retryUnauthorizedCsrf))) {
+    headers["X-XSRF-TOKEN"] = await csrf(true);
+    response = await send();
+  }
+  if (unsafe) csrfToken = null;
+  return response;
+};
+
 export const login = async (email, password) => {
-  const response = await fetch(`${API_URL}/auth/login`, {
+  const response = await request("/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  return parseResponse(response);
+  const payload = await parseResponse(response);
+  csrfToken = null;
+  return payload;
 };
 
 export const register = async ({ name, email, password, phoneNumber }) => {
-  const response = await fetch(`${API_URL}/auth/register`, {
+  const response = await request("/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, email, password, phoneNumber: phoneNumber || null }),
@@ -27,7 +77,7 @@ export const register = async ({ name, email, password, phoneNumber }) => {
 };
 
 export const forgotPassword = async (email) => {
-  const response = await fetch(`${API_URL}/auth/forgot-password`, {
+  const response = await request("/auth/forgot-password", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
@@ -36,7 +86,7 @@ export const forgotPassword = async (email) => {
 };
 
 export const resetPassword = async (token, newPassword) => {
-  const response = await fetch(`${API_URL}/auth/reset-password`, {
+  const response = await request("/auth/reset-password", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, newPassword }),
@@ -44,55 +94,121 @@ export const resetPassword = async (token, newPassword) => {
   return parseResponse(response);
 };
 
+export const verifyEmail = async (token) => {
+  const response = await request("/auth/verify-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  return parseResponse(response);
+};
+
+export const resendVerification = async (email) => {
+  const response = await request("/auth/resend-verification", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  return parseResponse(response);
+};
+
 export const googleLogin = async (credential) => {
-  const response = await fetch(`${API_URL}/auth/google`, {
+  const response = await request("/auth/google", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ credential }),
   });
+  const payload = await parseResponse(response);
+  csrfToken = null;
+  return payload;
+};
+
+export const refreshAccessToken = async () => {
+  const refresh = async () => {
+    const response = await request("/auth/refresh", { method: "POST" });
+    const payload = await parseResponse(response);
+    csrfToken = null;
+    return payload;
+  };
+  return navigator.locks?.request
+    ? navigator.locks.request("shades-world-auth-refresh", refresh)
+    : refresh();
+};
+
+export const getCurrentUser = async () => {
+  const response = await request("/auth/me");
   return parseResponse(response);
 };
 
-export const refreshAccessToken = async (refreshToken) => {
-  const response = await fetch(`${API_URL}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
-  });
-  return parseResponse(response);
-};
+export const updateCurrentUser = (accessToken, profile) =>
+  authenticatedRequest("/auth/me", accessToken, { method: "PUT", body: JSON.stringify(profile) });
 
-export const getCurrentUser = async (accessToken) => {
-  const response = await fetch(`${API_URL}/auth/me`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  return parseResponse(response);
-};
+export const getCommunicationPreferences = (accessToken) =>
+  authenticatedRequest("/communication-preferences", accessToken);
+
+export const updateCommunicationPreferences = (accessToken, preferences) =>
+  authenticatedRequest("/communication-preferences", accessToken, { method: "PUT", body: JSON.stringify(preferences) });
 
 export const getStoreProducts = async () => {
   const response = await fetch(`${API_URL}/products?size=200&sort=productId,desc`);
   return parseResponse(response);
 };
 
-export const logout = async (accessToken) => {
-  const response = await fetch(`${API_URL}/auth/logout`, {
+export const logout = async () => {
+  const response = await request("/auth/logout", {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}` },
   });
+  csrfToken = null;
   return parseResponse(response);
 };
 
 const authenticatedRequest = async (path, accessToken, options = {}) => {
-  const response = await fetch(`${API_URL}${path}`, {
+  const execute = () => request(path, {
     ...options,
+    retryUnauthorizedCsrf: true,
     headers: {
       ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
-      Authorization: `Bearer ${accessToken}`,
       ...options.headers,
     },
   });
+  let response = await execute();
+  if (response.status === 401) {
+    if (!refreshPromise) refreshPromise = refreshAccessToken().finally(() => { refreshPromise = null; });
+    await refreshPromise;
+    response = await execute();
+  }
   return parseResponse(response);
 };
+
+export const downloadInvoice = async (accessToken, orderId, admin = false) => {
+  const path = admin ? `/orders/admin/${orderId}/invoice` : `/orders/${orderId}/invoice`;
+  const response = await request(path);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message || "The invoice could not be downloaded.");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `shades-world-invoice-${orderId}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+export const getNotifications = (accessToken, page = 0) =>
+  authenticatedRequest(`/notifications?page=${page}&size=30&sort=createdAt,desc`, accessToken);
+
+export const getUnreadNotificationCount = (accessToken) =>
+  authenticatedRequest("/notifications/unread-count", accessToken);
+
+export const markNotificationRead = (accessToken, notificationId) =>
+  authenticatedRequest(`/notifications/${notificationId}/read`, accessToken, { method: "PATCH" });
+
+export const markAllNotificationsRead = (accessToken) =>
+  authenticatedRequest("/notifications/read-all", accessToken, { method: "PATCH" });
 
 export const getCoupons = (accessToken) =>
   authenticatedRequest("/coupons?size=100&sort=couponId,desc", accessToken);
@@ -103,16 +219,24 @@ export const createCoupon = (accessToken, coupon) =>
     body: JSON.stringify(coupon),
   });
 
-export const validateCoupon = (accessToken, couponCode, orderAmount, itemQuantity) =>
-  authenticatedRequest("/coupons/validate", accessToken, {
-    method: "POST",
-    body: JSON.stringify({ couponCode, orderAmount, itemQuantity }),
+export const updateCoupon = (accessToken, couponId, coupon) =>
+  authenticatedRequest(`/coupons/${couponId}`, accessToken, {
+    method: "PUT",
+    body: JSON.stringify(coupon),
   });
 
+export const validateCoupon = (accessToken, couponCode) =>
+  authenticatedRequest("/coupons/validate", accessToken, {
+    method: "POST",
+    body: JSON.stringify({ couponCode }),
+  });
+
+export const setCouponActive = (accessToken, couponId, active) =>
+  authenticatedRequest(`/coupons/${couponId}/active?active=${active}`, accessToken, { method: "PATCH" });
+
 export const deactivateCoupon = async (accessToken, couponId) => {
-  const response = await fetch(`${API_URL}/coupons/${couponId}`, {
+  const response = await request(`/coupons/${couponId}`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) return parseResponse(response);
 };
@@ -160,9 +284,15 @@ export const deleteProductImage = (accessToken, productId, imageId) =>
   authenticatedRequest(`/products/${productId}/images/${imageId}`, accessToken, { method: "DELETE" });
 
 export const adjustInventory = (accessToken, variantId, quantity, movementType, reason) => {
-  const params = new URLSearchParams({ quantity, movementType, reason });
-  return authenticatedRequest(`/inventory/variants/${variantId}/adjust?${params}`, accessToken, { method: "POST" });
+  return authenticatedRequest(`/inventory/variants/${variantId}/adjust`, accessToken, {
+    method: "POST", body: JSON.stringify({ quantity: Number(quantity), movementType, reason }),
+  });
 };
+
+export const updateLowStockThreshold = (accessToken, variantId, lowStockThreshold) =>
+  authenticatedRequest(`/inventory/variants/${variantId}/threshold`, accessToken, {
+    method: "PATCH", body: JSON.stringify({ lowStockThreshold: Number(lowStockThreshold) }),
+  });
 
 export const getAdminOrders = (accessToken) =>
   authenticatedRequest("/orders/admin/all?size=200", accessToken);
@@ -191,6 +321,19 @@ export const getAdminCustomers = (accessToken) =>
 export const setCustomerActive = (accessToken, userId, active) =>
   authenticatedRequest(`/admin/customers/${userId}/active?active=${active}`, accessToken, { method: "PATCH" });
 
+export const getEmailOutbox = (accessToken, { status = "", search = "", page = 0, size = 25 } = {}) => {
+  const params = new URLSearchParams({ page, size, sort: "createdAt,desc" });
+  if (status) params.set("status", status);
+  if (search.trim()) params.set("search", search.trim());
+  return authenticatedRequest(`/admin/email-outbox?${params}`, accessToken);
+};
+
+export const getEmailOutboxSummary = (accessToken) =>
+  authenticatedRequest("/admin/email-outbox/summary", accessToken);
+
+export const retryEmailOutbox = (accessToken, emailOutboxId) =>
+  authenticatedRequest(`/admin/email-outbox/${emailOutboxId}/retry`, accessToken, { method: "POST" });
+
 export const getProductReviews = async (productId) => {
   const response = await fetch(`${API_URL}/reviews/products/${productId}?size=100&sort=createdAt,desc`);
   return parseResponse(response);
@@ -210,8 +353,46 @@ export const updateReview = (accessToken, reviewId, review) =>
 export const deleteReview = (accessToken, reviewId) =>
   authenticatedRequest(`/reviews/${reviewId}`, accessToken, { method: "DELETE" });
 
+export const getAdminReviews = (accessToken, { status = "", search = "", page = 0 } = {}) => {
+  const params = new URLSearchParams({ page, size: 50, sort: "createdAt,desc" });
+  if (status) params.set("status", status);
+  if (search.trim()) params.set("search", search.trim());
+  return authenticatedRequest(`/reviews/admin?${params}`, accessToken);
+};
+
+export const moderateReview = (accessToken, reviewId, status) =>
+  authenticatedRequest(`/reviews/admin/${reviewId}/status`, accessToken, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+
 export const getMyOrders = (accessToken) =>
   authenticatedRequest("/orders?size=100&sort=purchasedAt,desc", accessToken);
+export const cancelOrder = (accessToken, orderId) =>
+  authenticatedRequest(`/orders/${orderId}/cancel`, accessToken, { method: "POST" });
+
+export const getCart = (accessToken) => authenticatedRequest("/cart", accessToken);
+export const addCartItem = (accessToken, variantId, quantity = 1) =>
+  authenticatedRequest("/cart/items", accessToken, { method: "POST", body: JSON.stringify({ variantId, quantity }) });
+export const updateCartItem = (accessToken, variantId, quantity) =>
+  authenticatedRequest(`/cart/items/${variantId}?quantity=${encodeURIComponent(quantity)}`, accessToken, { method: "PUT" });
+export const removeCartItem = (accessToken, variantId) =>
+  authenticatedRequest(`/cart/items/${variantId}`, accessToken, { method: "DELETE" });
+export const getAddresses = (accessToken) => authenticatedRequest("/addresses", accessToken);
+export const createAddress = (accessToken, address) =>
+  authenticatedRequest("/addresses", accessToken, { method: "POST", body: JSON.stringify(address) });
+export const updateAddress = (accessToken, addressId, address) =>
+  authenticatedRequest(`/addresses/${addressId}`, accessToken, { method: "PUT", body: JSON.stringify(address) });
+export const deleteAddress = (accessToken, addressId) =>
+  authenticatedRequest(`/addresses/${addressId}`, accessToken, { method: "DELETE" });
+export const setDefaultAddress = (accessToken, addressId) =>
+  authenticatedRequest(`/addresses/${addressId}/default`, accessToken, { method: "PATCH" });
+export const createOrder = (accessToken, order) =>
+  authenticatedRequest("/orders", accessToken, { method: "POST", body: JSON.stringify(order) });
+export const processMockPayment = (accessToken, orderId) =>
+  authenticatedRequest(`/payments/orders/${orderId}`, accessToken, {
+    method: "POST", body: JSON.stringify({ paymentMethod: "MOCK" }),
+  });
 
 export const getMyReturns = (accessToken) => authenticatedRequest("/returns?size=100", accessToken);
 export const createReturn = (accessToken, request) => authenticatedRequest("/returns", accessToken, { method: "POST", body: JSON.stringify(request) });
