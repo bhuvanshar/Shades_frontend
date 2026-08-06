@@ -22,6 +22,7 @@
 .logo-link {
   display: flex;
   align-items: center;
+  transform: translateX(-140px);
 }
 
 /* ── Nav links ── */
@@ -189,6 +190,9 @@
 }
 
 @media (max-width: 750px) {
+  .logo-link {
+    transform: none;
+  }
   .navbar-right {
     gap: 8px;
   }

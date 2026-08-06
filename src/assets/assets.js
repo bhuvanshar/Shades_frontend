@@ -15,7 +15,7 @@ import profile_icon from "./profile_icon.png";
 import bag_icon from "./bag_icon.png";
 import logout_icon from "./logout_icon.png";
 import parcel_icon from "./parcel_icon.png";
-import hero_img from "./hero_barcelona.png";
+import hero_img from "./hero_shades_world.png";
 
 import food_1 from "./food_1.png";
 import food_2 from "./food_2.png";
