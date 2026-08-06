@@ -1,6 +1,7 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addCartItem, addWishlistItem, getCart, getStoreProducts, getWishlist, removeCartItem, removeWishlistItem, updateCartItem } from "../services/api";
 import { useAuth } from "./AuthContext";
+import { clearGuestCart, readGuestCart, writeGuestCart } from "../services/guestCart";
 
 export const StoreContext = createContext(null);
 const storefrontCategories = ["All", "Men", "Women", "Unisex", "Accessory"];
@@ -81,21 +82,31 @@ const StoreContextProvider = ({ children }) => {
   const [product_list, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState("");
-  const [cartItems, setCartItems] = useState({});
+  // Seeded synchronously from storage rather than in an effect: the sign-in merge captures
+  // `localSnapshot = {...cartItemsRef.current}` on its first run, and an effect-based seed would
+  // land after that snapshot, silently dropping the restored guest bag.
+  const [cartItems, setCartItems] = useState(readGuestCart);
   const [appliedOffer, setAppliedOffer] = useState(null);
   const [wishlistItems, setWishlistItems] = useState([]);
   const [wishlistLoading, setWishlistLoading] = useState(false);
   const [cartError, setCartError] = useState("");
   const [cartOperations, setCartOperations] = useState(0);
   const previousCustomerRef = useRef(null);
-  const cartItemsRef = useRef({});
+  const cartItemsRef = useRef(cartItems);
+  // Mirrors customerId for the synchronous writer below. It is assigned before any cart clear
+  // so a sign-out clears the guest key instead of writing the ex-customer's bag into it.
+  const customerIdRef = useRef(null);
   const productListRef = useRef([]);
   const cartMutationQueueRef = useRef(Promise.resolve());
   const cartMutationSeqRef = useRef(0);
 
+  // The single writer for cart state, so persistence hooks in here once rather than at each of
+  // the six mutation paths. Only the signed-out bag is stored: an authenticated bag is already
+  // in the database, and mirroring it would leak one account's items into the next session.
   const replaceCartItems = useCallback((next) => {
     cartItemsRef.current = typeof next === "function" ? next(cartItemsRef.current) : next;
     setCartItems(cartItemsRef.current);
+    if (customerIdRef.current === null) writeGuestCart(cartItemsRef.current);
   }, []);
 
   const refreshProducts = useCallback(() => {
@@ -124,6 +135,8 @@ const StoreContextProvider = ({ children }) => {
 
   useEffect(() => {
     const currentCustomer = customerId == null ? null : String(customerId);
+    // Assigned before the clears below so replaceCartItems knows which bag it is writing.
+    customerIdRef.current = currentCustomer;
     if (!currentCustomer) {
       if (previousCustomerRef.current) { replaceCartItems({}); setAppliedOffer(null); }
       previousCustomerRef.current = null;
@@ -198,6 +211,11 @@ const StoreContextProvider = ({ children }) => {
         if (!active) return;
         if (!fresh.error && fresh.isLatest) applyCartState(cartStateFromResponse(fresh.cart));
       }
+      // The bag now belongs to the account, so drop the guest copy — otherwise every
+      // authenticated reload would merge it again and resurrect deleted lines. Deliberately not
+      // in the `opened.error` return above: if the merge never ran, the guest bag is still the
+      // only copy and must survive.
+      clearGuestCart();
       if (active) setCartError(notes.join(" "));
     };
     withCartBusy(synchronize).catch((error) => { if (active) setCartError(error.message); });
@@ -219,9 +237,23 @@ const StoreContextProvider = ({ children }) => {
     });
   }));
   const cartKey = (itemId, variantId) => variantId ? `${itemId}:${variantId}` : String(itemId);
+  // Stock known to the loaded catalogue. Unknown means "do not clamp" — the same rule the
+  // sign-in merge uses — so a not-yet-loaded catalogue never silently blocks a legitimate add.
+  const knownStockFor = (itemId, variantId) => {
+    if (!variantId) return null;
+    const product = productListRef.current.find((item) => item._id === String(itemId));
+    return finiteOrNull(product?.variants?.find((item) => String(item.variantId) === String(variantId))?.quantityAvailable);
+  };
   const addToCart = (itemId, variantId) => {
     setAppliedOffer(null); setCartError("");
     const key = cartKey(itemId, variantId);
+    const cap = knownStockFor(itemId, variantId);
+    // The disabled Add button cannot hold this line on its own: a burst of clicks all fire
+    // before React re-renders, so the ceiling is enforced here where it is authoritative.
+    if (cap !== null && (cartItemsRef.current[key] || 0) >= cap) {
+      setCartError(cap === 0 ? "That colour is out of stock." : `Only ${cap} of that colour ${cap === 1 ? "is" : "are"} available.`);
+      return;
+    }
     replaceCartItems((previous) => ({ ...previous, [key]: (previous[key] || 0) + 1 }));
     if (accessToken && variantId) enqueueCartMutation(() => addCartItem(accessToken, variantId, 1));
   };

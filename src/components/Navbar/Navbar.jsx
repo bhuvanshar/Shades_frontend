@@ -93,7 +93,6 @@ const Navbar = () => {
 
         <div className="navbar-right">
           <NotificationBell />
-          <Link to="/#shop" aria-label="Discover products"><img src={assets.search_icon} alt="Search" className="nav-icon" /></Link>
           <div className="cart-icon-wrapper">
             <Link to="/cart" aria-label={`Cart${cartCount ? `, ${cartCount} item${cartCount === 1 ? "" : "s"}` : ""}`}>
               <img

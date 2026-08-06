@@ -135,3 +135,12 @@
   min-width: 20px;
   text-align: center;
 }
+
+.product-card-in-bag {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: #397048;
+  text-align: center;
+}

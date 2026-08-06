@@ -1,12 +1,11 @@
 import React, { useContext } from "react";
 import "./ProductCard.css";
 import { Link, useNavigate } from "react-router-dom";
-import { assets } from "../../assets/assets";
 import { StoreContext } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 
 const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, isNew, variantId, stock, available = true }) => {
-  const { cartItems, addToCart, removeFromCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
+  const { cartItems, addToCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
   const { user } = useAuth();
   const navigate = useNavigate();
   const cartKey = variantId ? `${id}:${variantId}` : String(id);
@@ -18,6 +17,7 @@ const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, i
   const unitPrice = variantPrice == null || !Number.isFinite(Number(variantPrice)) ? Number(price) : Number(variantPrice);
   const cap = stock == null || !Number.isFinite(Number(stock)) ? null : Number(stock);
   const inStock = available && cap !== 0;
+  const atCap = cap !== null && count >= cap;
   const target = color ? `${name} in ${color}` : name;
 
   return (
@@ -38,23 +38,16 @@ const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, i
         <p className="product-price">₹{unitPrice.toLocaleString("en-IN")}</p>
         {priceFrom != null && Number(priceFrom) < unitPrice && <p className="product-price-note">Other colours from ₹{Number(priceFrom).toLocaleString("en-IN")}</p>}
 
+        {/* No quantity stepper on the listing by design: quantities are edited in the bag.
+            The stepper used to be the only client-side stock ceiling, so the cap moves onto
+            this button — otherwise repeated clicks would push past stock until the API 400s. */}
         <div className="product-card-actions">
-          {count === 0 ? (
-            <button className="add-to-bag" aria-label={inStock ? `Add ${target} to bag` : `${name} is out of stock`} disabled={!variantId || !inStock} onClick={() => addToCart(id, variantId)}>
-              {inStock ? (color ? `Add ${color} to bag` : "Add to bag") : "Out of stock"}
-            </button>
-          ) : (
-            <div className="qty-control">
-              <button aria-label={`Decrease quantity of ${target}`} onClick={() => removeFromCart(id, variantId)}>
-                <img src={assets.remove_icon_red} alt="" />
-              </button>
-              <span aria-live="polite" aria-label={`${count} of ${target} in bag`}>{count}</span>
-              <button aria-label={cap !== null && count >= cap ? `No more ${target} available` : `Increase quantity of ${target}`}
-                disabled={cap !== null && count >= cap} onClick={() => addToCart(id, variantId)}>
-                <img src={assets.add_icon_green} alt="" />
-              </button>
-            </div>
-          )}
+          <button className="add-to-bag" disabled={!variantId || !inStock || atCap}
+            aria-label={!inStock ? `${name} is out of stock` : atCap ? `No more ${target} available` : `Add ${target} to bag`}
+            onClick={() => addToCart(id, variantId)}>
+            {!inStock ? "Out of stock" : atCap ? `All ${cap} in your bag` : color ? `Add ${color} to bag` : "Add to bag"}
+          </button>
+          {count > 0 && <Link to="/cart" className="product-card-in-bag">{count} in bag · View bag →</Link>}
         </div>
       </div>
     </div>

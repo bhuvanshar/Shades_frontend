@@ -14,6 +14,8 @@ const rejection = (message, status) => Object.assign(new Error(message), { statu
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The guest bag is persisted now, so it would otherwise carry between tests in this file.
+  window.localStorage.clear();
   Object.assign(mockAuth, { accessToken:"cookie-session", user:{ userId:7 }, isAdmin:false });
   api.getStoreProducts.mockResolvedValue({ content:[] }); api.getWishlist.mockResolvedValue({ items:[] });
   api.getCart.mockResolvedValue({ items:[{ productId:14, variantId:13, quantity:3 }] });
@@ -130,11 +132,13 @@ test("sign in clamps a guest quantity to the stock it knows about", async () => 
     variants:[{ variantId:13, isActive:true, price:100, quantityAvailable:2 }] }] });
   api.getCart.mockResolvedValue({ items:[] });
   api.addCartItem.mockResolvedValue({ items:[{ productId:14, variantId:13, quantity:2 }] });
+  // The bag was saved while three were still available and stock has since fallen to two, so
+  // it is seeded rather than clicked — addToCart now refuses to exceed the stock it can see,
+  // which makes an over-stock bag unreachable through the UI. The merge must still clamp it.
+  window.localStorage.setItem("shades_world_guest_cart",
+    JSON.stringify({ version:1, savedAt:Date.now(), items:{ "14:13":3 } }));
   const { rerender } = render(<StoreContextProvider><Harness /></StoreContextProvider>);
   await waitFor(() => expect(screen.getByLabelText("products")).toHaveTextContent("1"));
-  fireEvent.click(screen.getByRole("button", { name:"add blue" }));
-  fireEvent.click(screen.getByRole("button", { name:"add blue" }));
-  fireEvent.click(screen.getByRole("button", { name:"add blue" }));
   expect(screen.getByLabelText("quantity")).toHaveTextContent("3");
 
   Object.assign(mockAuth, { accessToken:"cookie-session", user:{ userId:7 } });
