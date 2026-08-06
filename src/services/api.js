@@ -4,6 +4,8 @@ let csrfPromise = null;
 let refreshPromise = null;
 
 const parseResponse = async (response) => {
+  // 204 and other empty bodies are legitimate successes, not parse failures.
+  if (response.status === 204) return null;
   let payload = await response.json().catch(() => null);
   if (!response.ok) {
     const error = new Error(payload?.message || "Something went wrong. Please try again.");
@@ -154,12 +156,35 @@ export const getStoreProducts = async () => {
   return parseResponse(response);
 };
 
+/**
+ * Signing out is idempotent by definition: the goal is "this browser no longer holds a session",
+ * and a server that rejects the call because the session or CSRF pair is already gone has, in
+ * effect, already achieved that.
+ *
+ * The endpoint is permitAll, so a dead session still returns 200. The rejection that surfaced as
+ * "Something went wrong. Please try again." is a CSRF failure — a missing XSRF cookie or a token
+ * that no longer matches it both return **401 with an empty body**, and parseResponse turns an
+ * empty error body into that generic message. Every other unsafe call opts into the 401 retry via
+ * retryUnauthorizedCsrf; logout did not, so it threw where the others recovered.
+ *
+ * 5xx and network failures are still surfaced, so a genuinely broken backend is not hidden.
+ */
 export const logout = async () => {
-  const response = await request("/auth/logout", {
-    method: "POST",
-  });
-  csrfToken = null;
-  return parseResponse(response);
+  try {
+    const response = await request("/auth/logout", {
+      method: "POST",
+      retryUnauthorizedCsrf: true,
+    });
+    csrfToken = null;
+    // 401/403 here means the session or its CSRF pair is already gone — the desired end state.
+    if (response.status === 401 || response.status === 403) {
+      return { message: "Already signed out" };
+    }
+    return await parseResponse(response);
+  } catch (error) {
+    csrfToken = null;
+    throw error;
+  }
 };
 
 const authenticatedRequest = async (path, accessToken, options = {}) => {

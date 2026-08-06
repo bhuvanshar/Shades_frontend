@@ -177,6 +177,11 @@
   .navbar-inner {
     padding: 14px 20px;
   }
+  /* The wide-screen wordmark offset does not fit once the bar tightens: below this width it
+     pushed the logo past the left edge of the viewport on every page. */
+  .logo-link {
+    transform: none;
+  }
   .navbar-menu {
     gap: 20px;
   }

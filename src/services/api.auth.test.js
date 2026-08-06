@@ -93,3 +93,60 @@ test("stable Spring page metadata is normalized for existing catalogue consumers
   expect(page.totalElements).toBe(1);
   expect(page.totalPages).toBe(1);
 });
+
+describe("sign-out is idempotent", () => {
+  // Reproduced against the real backend: a missing XSRF cookie, or a token that no longer matches
+  // the cookie, both return 401 with an EMPTY body. parseResponse turned that into
+  // "Something went wrong. Please try again." — the error users actually saw.
+  test("a 401 with an empty body no longer throws", async () => {
+    fetch.mockImplementationOnce(() => answer(200, { token: "t1" }))
+      .mockImplementationOnce(() => answer(401, null))
+      .mockImplementationOnce(() => answer(200, { token: "t2" }))
+      .mockImplementationOnce(() => answer(401, null));
+    const api = await import("./api");
+    await expect(api.logout()).resolves.toEqual({ message: "Already signed out" });
+  });
+
+  test("logout retries once with a fresh CSRF token, like every other unsafe call", async () => {
+    fetch.mockImplementationOnce(() => answer(200, { token: "stale" }))
+      .mockImplementationOnce(() => answer(401, null))
+      .mockImplementationOnce(() => answer(200, { token: "fresh" }))
+      .mockImplementationOnce(() => answer(200, { message: "Logged out successfully" }));
+    const api = await import("./api");
+    await expect(api.logout()).resolves.toEqual({ message: "Logged out successfully" });
+    const logoutCalls = fetch.mock.calls.filter(([url]) => url.endsWith("/auth/logout"));
+    expect(logoutCalls).toHaveLength(2);
+    expect(logoutCalls[0][1].headers["X-XSRF-TOKEN"]).toBe("stale");
+    expect(logoutCalls[1][1].headers["X-XSRF-TOKEN"]).toBe("fresh");
+  });
+
+  test("a 403 is also treated as already signed out", async () => {
+    fetch.mockImplementationOnce(() => answer(200, { token: "t1" }))
+      .mockImplementationOnce(() => answer(403, null))
+      .mockImplementationOnce(() => answer(200, { token: "t2" }))
+      .mockImplementationOnce(() => answer(403, null));
+    const api = await import("./api");
+    await expect(api.logout()).resolves.toEqual({ message: "Already signed out" });
+  });
+
+  test("a genuine server failure is still surfaced rather than swallowed", async () => {
+    fetch.mockImplementationOnce(() => answer(200, { token: "t1" }))
+      .mockImplementationOnce(() => answer(500, { message: "Database unavailable" }));
+    const api = await import("./api");
+    await expect(api.logout()).rejects.toThrow("Database unavailable");
+  });
+
+  test("a network failure is still surfaced", async () => {
+    fetch.mockImplementationOnce(() => answer(200, { token: "t1" }))
+      .mockImplementationOnce(() => Promise.reject(new Error("Failed to fetch")));
+    const api = await import("./api");
+    await expect(api.logout()).rejects.toThrow("Failed to fetch");
+  });
+
+  test("a 204 with no body is a success, not a parse failure", async () => {
+    fetch.mockImplementationOnce(() => answer(200, { token: "t1" }))
+      .mockImplementationOnce(() => ({ status: 204, ok: true, json: () => Promise.reject(new Error("no body")) }));
+    const api = await import("./api");
+    await expect(api.logout()).resolves.toBeNull();
+  });
+});

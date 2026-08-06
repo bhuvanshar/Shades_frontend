@@ -354,3 +354,16 @@
 .pd-detail-variant {
   font-weight: 500;
 }
+
+/* Three tabs in a non-wrapping row exceed the content width of a 320px phone and pushed the
+   whole product page into horizontal scroll. Wrap instead, and tighten the spacing. */
+@media (max-width: 420px) {
+  .pd-tabs {
+    flex-wrap: wrap;
+  }
+  .pd-tabs button {
+    padding: 10px 12px 10px 0;
+    margin-right: 6px;
+    font-size: 12px;
+  }
+}

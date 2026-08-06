@@ -59,12 +59,30 @@ export const AuthProvider = ({ children }) => {
     return current;
   }, []);
 
+  /**
+   * Never rejects. Local sign-out is the part we fully control, so it always happens; a failed
+   * server call must not leave the user staring at an error while still appearing signed in.
+   *
+   * This matters because sign-out is not always user-initiated — AdminExitGuard calls it on
+   * navigation, including browser Back — so a rejection here became an unhandled rejection and a
+   * dev-overlay error screen rather than anything the user could act on.
+   *
+   * The reason is returned rather than swallowed silently, so a caller can surface a genuine
+   * backend failure while the session is still correctly cleared.
+   */
   const signOut = async () => {
+    let failure = null;
     try {
       await api.logout();
+    } catch (error) {
+      failure = error;
+      if (process.env.NODE_ENV !== "test") {
+        console.warn("Sign-out request failed; clearing the local session anyway.", error);
+      }
     } finally {
       setUser(null);
     }
+    return failure;
   };
 
   const value = {

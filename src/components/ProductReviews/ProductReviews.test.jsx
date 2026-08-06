@@ -67,8 +67,8 @@ test("a delivered purchase can be reviewed, and the list refreshes afterwards", 
   await waitFor(() => expect(api.createReview).toHaveBeenCalledWith("cookie-session", {
     productId: 20, orderItemId: 5, rating: 4, reviewText: "Lovely blue.",
   }));
-  // Success feedback, and the list is reloaded so a moderated review appears when approved.
-  await waitFor(() => expect(screen.getByText(/sent for moderation/)).toBeInTheDocument());
+  // Success feedback says it is live, and the list is reloaded so it appears straight away.
+  await waitFor(() => expect(screen.getByText(/is now live/)).toBeInTheDocument());
   expect(api.getProductReviews).toHaveBeenCalledTimes(2);
 });
 
@@ -101,7 +101,7 @@ test("a second variant of the same product is reviewable — the case the DB con
 test("moderation state is explained rather than left looking published", async () => {
   api.getMyProductReview.mockResolvedValue([{ ...approved, reviewStatus: "PENDING" }]);
   await view();
-  await waitFor(() => expect(screen.getByText(/Waiting for moderation/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/re-checked after moderation/)).toBeInTheDocument());
 });
 
 test("a rejected review can be edited and resubmitted", async () => {
@@ -109,7 +109,7 @@ test("a rejected review can be edited and resubmitted", async () => {
   api.updateReview.mockResolvedValue({ ...approved, reviewStatus: "PENDING" });
   await view();
 
-  await waitFor(() => expect(screen.getByText(/You can edit and resubmit it/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/removed by moderation/)).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "Edit review" }));
   fireEvent.click(screen.getByRole("button", { name: "Update variant review" }));
   await waitFor(() => expect(api.updateReview).toHaveBeenCalledWith("cookie-session", 1,
@@ -159,4 +159,28 @@ test("an administrator is told they cannot publish customer reviews", async () =
   Object.assign(auth, { isAdmin: true });
   await view();
   expect(screen.getByText(/Administrator accounts cannot publish customer reviews/)).toBeInTheDocument();
+});
+
+test("a newly published review is visible to everyone straight away, with no approval step", async () => {
+  // The public list is the server's own PUBLISHED/APPROVED set; the component must not add a
+  // second, stricter filter of its own on top of it.
+  const published = { ...approved, reviewStatus: "PUBLISHED", reviewText: "Live immediately." };
+  api.getProductReviews.mockResolvedValue({ content: [published] });
+  auth.isAuthenticated = false;
+  auth.accessToken = null;
+  await view();
+  // Signed out — a guest sees it.
+  await waitFor(() => expect(screen.getByText("Live immediately.")).toBeInTheDocument());
+  expect(screen.getByText("4.0")).toBeInTheDocument();
+  expect(screen.getByText("1 verified review")).toBeInTheDocument();
+});
+
+test("the rating summary counts published reviews", async () => {
+  api.getProductReviews.mockResolvedValue({ content: [
+    { ...approved, reviewId: 1, reviewStatus: "PUBLISHED", rating: 5 },
+    { ...approved, reviewId: 2, reviewStatus: "APPROVED", rating: 3 },
+  ] });
+  await view();
+  await waitFor(() => expect(screen.getByText("4.0")).toBeInTheDocument());
+  expect(screen.getByText("2 verified reviews")).toBeInTheDocument();
 });

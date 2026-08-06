@@ -1,25 +1,12 @@
 const { test, expect } = require("@playwright/test");
 const { createProduct, markDelivered, stockOf } = require("./support/fixtures");
+const { addToBag, buyAndDeliver, checkout } = require("./support/shop");
 const { sqlValue } = require("./support/api");
 const { fillCheckoutAddress, signInAsNewCustomer } = require("./support/ui");
 
 // The review flow end to end, against a genuinely DELIVERED order.
 // This is the scenario the unapplied migration used to break: reviews are keyed per order item,
 // but the live schema still enforced one review per user per product.
-
-const buyAndDeliver = async (page, { productId, colour, quantity = 1 }) => {
-  await page.goto(`/product/${productId}`);
-  if (colour) await page.locator(".pd-variant-options button", { hasText: colour }).click();
-  for (let i = 0; i < quantity; i += 1) await page.locator(".pd-add-btn").click();
-  await page.goto("/order");
-  await fillCheckoutAddress(page, { pincode: "560001" });
-  await page.locator(".checkout-confirm input[type=checkbox]").check();
-  await page.locator(".checkout-pay-btn").click();
-  await expect(page).toHaveURL(/my-orders/, { timeout: 30_000 });
-  const orderId = Number(sqlValue("SELECT MAX(ORDER_ID) FROM ORDERS"));
-  expect(await markDelivered(orderId)).toBe("DELIVERED");
-  return orderId;
-};
 
 const approve = async (reviewId) => {
   const { admin } = require("./support/fixtures");
@@ -51,9 +38,9 @@ test("a delivered purchase can be reviewed, and it persists across a refresh", a
   await page.locator(".review-form textarea").fill("Crisp amber lenses, very light.");
   await page.locator(".review-form button[type=submit], .review-form-footer button:not(.cancel)").last().click();
 
-  // Pending moderation, and the app says so rather than implying it is public.
-  await expect(page.locator(".reviews-alert.success")).toContainText("sent for moderation", { timeout: 20_000 });
-  await expect(page.locator(".my-review")).toContainText("PENDING");
+  // Published on submission: eligibility is the gate, not a moderator.
+  await expect(page.locator(".reviews-alert.success")).toContainText("live", { timeout: 20_000 });
+  await expect(page.locator(".my-review")).toContainText("PUBLISHED");
 
   // It is in the database, and it survives a reload.
   const reviewId = Number(sqlValue("SELECT MAX(REVIEW_ID) FROM REVIEWS"));
@@ -61,7 +48,7 @@ test("a delivered purchase can be reviewed, and it persists across a refresh", a
   expect(sqlValue(`SELECT REVIEW_TEXT FROM REVIEWS WHERE REVIEW_ID=${reviewId}`))
     .toContain("Crisp amber lenses");
   await page.reload();
-  await expect(page.locator(".my-review")).toContainText("PENDING", { timeout: 20_000 });
+  await expect(page.locator(".my-review")).toContainText("PUBLISHED", { timeout: 20_000 });
 
   // Once approved it counts towards the public rating summary.
   await approve(reviewId);
@@ -81,18 +68,11 @@ test("both variants of one product can be reviewed — the case the DB constrain
   });
   const account = await signInAsNewCustomer(page, "reviewtwo");
 
-  // One order containing both variants, delivered.
-  await page.goto(`/product/${product.productId}`);
-  await page.locator(".pd-variant-options button", { hasText: "Blue" }).click();
-  await page.locator(".pd-add-btn").click();
-  await page.locator(".pd-variant-options button", { hasText: "Black" }).click();
-  await page.locator(".pd-add-btn").click();
-  await page.goto("/order");
-  await fillCheckoutAddress(page, { pincode: "560001" });
-  await page.locator(".checkout-confirm input[type=checkbox]").check();
-  await page.locator(".checkout-pay-btn").click();
-  await expect(page).toHaveURL(/my-orders/, { timeout: 30_000 });
-  const orderId = Number(sqlValue("SELECT MAX(ORDER_ID) FROM ORDERS"));
+  // One order containing both variants, delivered. Two separate adds, each waited on by the
+  // shared helper, then a single checkout.
+  await addToBag(page, { productId: product.productId, colour: "Blue", expectedBadge: 1 });
+  await addToBag(page, { productId: product.productId, colour: "Black", expectedBadge: 2 });
+  const orderId = await checkout(page);
   expect(await markDelivered(orderId)).toBe("DELIVERED");
 
   // Review the first variant, then the second. Under the old UQ_USER_PRODUCT_REVIEW index the

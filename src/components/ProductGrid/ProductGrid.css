@@ -55,3 +55,21 @@
   letter-spacing: 1.2px;
   text-transform: uppercase;
 }
+
+/* The page-number list must wrap: with a catalogue of several pages the row of controls is wider
+   than a phone viewport and pushed the whole page into horizontal scroll. */
+.product-pagination ul {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+@media (max-width: 560px) {
+  .product-pagination {
+    gap: 8px;
+  }
+  .product-pagination button {
+    min-width: 34px;
+    padding: 8px 9px;
+    font-size: 11px;
+  }
+}

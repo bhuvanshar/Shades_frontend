@@ -2,6 +2,7 @@ const { test, expect } = require("@playwright/test");
 const { createProduct, movementsForOrder, orderStatus, stockOf } = require("./support/fixtures");
 const { sqlValue } = require("./support/api");
 const { fillCheckoutAddress, signInAsNewCustomer } = require("./support/ui");
+const { addToBag, checkout } = require("./support/shop");
 
 // Checkout: pincode validation on both sides, real inventory decrements asserted against MySQL,
 // no overselling, no double decrement, and the cancellation modal.
@@ -13,23 +14,10 @@ const freshProduct = (label, variants) => createProduct({
   })),
 });
 
-const addToBag = async (page, productId, colour, times = 1) => {
-  await page.goto(`/product/${productId}`);
-  if (colour) await page.locator(".pd-variant-options button", { hasText: colour }).click();
-  for (let i = 0; i < times; i += 1) await page.locator(".pd-add-btn").click();
-};
-
-const placeOrder = async (page, { pincode = "560001", country = "India" } = {}) => {
-  await page.goto("/order");
-  await fillCheckoutAddress(page, { pincode, country });
-  await page.locator(".checkout-confirm input[type=checkbox]").check();
-  await page.locator(".checkout-pay-btn").click();
-};
-
-test("pincode accepts digits only, sanitises pasted junk and keeps a leading zero", async ({ page }) => {
+test("pincode accepts digits only, sanitises pasted junk and keeps a leading zero", async ({ page, browserName }) => {
   const product = await freshProduct("pin", [{ variantName: "Rose", color: "Rose", price: 900, quantityAvailable: 5 }]);
   await signInAsNewCustomer(page, "pin");
-  await addToBag(page, product.productId);
+  await addToBag(page, { productId: product.productId });
   await page.goto("/order");
   await fillCheckoutAddress(page, {});
 
@@ -42,12 +30,16 @@ test("pincode accepts digits only, sanitises pasted junk and keeps a leading zer
 
   // A genuinely pasted value is sanitised the same way. This is a real clipboard paste rather
   // than fill(), which truncates at the newline and would not exercise the paste path at all.
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.evaluate(() => navigator.clipboard.writeText("  12a3 45\n6  "));
-  await field.fill("");
-  await field.focus();
-  await page.keyboard.press("Control+V");
-  await expect(field).toHaveValue("123456");
+  // Playwright only supports clipboard permissions on Chromium, so the paste half runs there;
+  // every other assertion in this test runs on both engines.
+  if (browserName === "chromium") {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.evaluate(() => navigator.clipboard.writeText("  12a3 45\n6  "));
+    await field.fill("");
+    await field.focus();
+    await page.keyboard.press("Control+V");
+    await expect(field).toHaveValue("123456");
+  }
 
   // India: 6 digits, and a leading zero is rejected by the rule but never silently rewritten.
   await field.fill("060001");
@@ -97,18 +89,16 @@ test("an order with two variants decrements exactly those variants in the databa
   expect(stockOf(black.variantId)).toBe(4);
 
   await signInAsNewCustomer(page, "inv");
-  await addToBag(page, product.productId, "Blue", 2);
-  await addToBag(page, product.productId, "Black", 1);
+  await addToBag(page, { productId: product.productId, colour: "Blue", quantity: 2 });
+  await addToBag(page, { productId: product.productId, colour: "Black", quantity: 1 });
   await expect(page.locator(".cart-badge")).toHaveText("3");
 
-  await placeOrder(page);
-  await expect(page).toHaveURL(/my-orders/, { timeout: 30_000 });
+  const orderId = await checkout(page);
 
   // The database is the authority: exactly the purchased quantities came off.
   expect(stockOf(blue.variantId)).toBe(3);
   expect(stockOf(black.variantId)).toBe(3);
 
-  const orderId = Number(sqlValue(`SELECT MAX(ORDER_ID) FROM ORDERS`));
   const movements = movementsForOrder(orderId);
   expect(movements).toEqual(expect.arrayContaining([
     `SALE:${blue.variantId}:-2`, `SALE:${black.variantId}:-1`,
@@ -129,7 +119,7 @@ test("the server refuses to oversell and the bag shows real stock afterwards", a
   const [only] = product.variants;
 
   const account = await signInAsNewCustomer(page, "oversell");
-  await addToBag(page, product.productId, "Amber", 1);
+  await addToBag(page, { productId: product.productId, colour: "Amber", quantity: 1 });
 
   // The UI caps at stock, so the oversell attempt goes straight at the API the way a crafted
   // request or a stale tab would. The server is the authority and must refuse.
@@ -137,8 +127,7 @@ test("the server refuses to oversell and the bag shows real stock afterwards", a
     .rejects.toThrow(/available|stock|inventory/i);
   expect(stockOf(only.variantId)).toBe(1);
 
-  await placeOrder(page);
-  await expect(page).toHaveURL(/my-orders/, { timeout: 30_000 });
+  const orderId = await checkout(page);
   expect(stockOf(only.variantId)).toBe(0);
 
   // A second shopper cannot buy the unit that is gone.
@@ -155,11 +144,9 @@ test("a repeated payment call cannot decrement stock twice", async ({ page }) =>
   ]);
   const [variant] = product.variants;
   const account = await signInAsNewCustomer(page, "idem");
-  await addToBag(page, product.productId, "Teal", 2);
-  await placeOrder(page);
-  await expect(page).toHaveURL(/my-orders/, { timeout: 30_000 });
+  await addToBag(page, { productId: product.productId, colour: "Teal", quantity: 2 });
+  const orderId = await checkout(page);
 
-  const orderId = Number(sqlValue(`SELECT MAX(ORDER_ID) FROM ORDERS`));
   expect(stockOf(variant.variantId)).toBe(2);
 
   // Replay the payment callback. It must be idempotent: the existing PAID payment is returned
@@ -177,10 +164,8 @@ test("cancelling asks first, cancels once, and restores stock", async ({ page })
   ]);
   const [variant] = product.variants;
   await signInAsNewCustomer(page, "cancel");
-  await addToBag(page, product.productId, "Ivory", 1);
-  await placeOrder(page);
-  await expect(page).toHaveURL(/my-orders/, { timeout: 30_000 });
-  const orderId = Number(sqlValue(`SELECT MAX(ORDER_ID) FROM ORDERS`));
+  await addToBag(page, { productId: product.productId, colour: "Ivory", quantity: 1 });
+  const orderId = await checkout(page);
   expect(stockOf(variant.variantId)).toBe(2);
 
   // Nothing happens before confirmation.

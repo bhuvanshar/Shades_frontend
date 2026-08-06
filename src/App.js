@@ -57,7 +57,13 @@ const AdminExitGuard = () => {
     previousPath.current = location.pathname;
 
     if (wasInAdmin && !isInAdmin && isAdmin) {
-      signOut().finally(() => navigate("/signin", { replace: true }));
+      // .finally() re-throws a rejection, so this needs .catch() as well: signOut no longer
+      // rejects, but a guard that runs on browser navigation must not be able to produce an
+      // unhandled rejection if that ever changes. replace:true keeps the admin page out of the
+      // history entry we are leaving, so Back cannot return to it.
+      signOut()
+        .catch(() => undefined)
+        .finally(() => navigate("/signin", { replace: true }));
     }
   }, [location.pathname, isAdmin, navigate, signOut]);
 

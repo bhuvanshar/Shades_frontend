@@ -27,14 +27,29 @@ module.exports = defineConfig({
   reporter: [["list"], ["json", { outputFile: "e2e-results.json" }]],
   use: {
     baseURL: process.env.E2E_BASE_URL || "http://localhost:3001",
-    // Installed Chrome rather than bundled Chromium: `playwright install` needs a download this
-    // environment cannot be assumed to have.
-    channel: "chrome",
+    // NOTE: `channel` belongs to the Chrome project, not here — a global channel is inherited by
+    // every project and makes Firefox fail to launch with `Unsupported firefox channel "chrome"`.
     headless: true,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "off",
     actionTimeout: 15_000,
   },
-  projects: [{ name: "chrome", use: { ...devices["Desktop Chrome"], channel: "chrome" } }],
+  // Chrome uses the installed browser. `channel` must live on the project, never in the shared
+  // `use` block above, or every other project inherits it and fails with
+  // `Unsupported firefox channel "chrome"`.
+  //
+  // Firefox is opt-in via E2E_FIREFOX=1. `npx playwright install firefox` succeeds here (337 MB,
+  // INSTALLATION_COMPLETE, firefox.exe present) but launching it fails with `spawn UNKNOWN` —
+  // the OS refuses to execute the downloaded binary, which is an environment policy issue
+  // (SmartScreen / endpoint protection), not a Playwright or config one. The project is left
+  // wired up and correct so a single env var turns it on wherever that block does not apply.
+  // The suite is otherwise engine-agnostic: the only Chromium-only assertion is the clipboard
+  // paste in checkout-inventory-cancel.spec.js, which already guards on browserName.
+  projects: [
+    { name: "chrome", use: { ...devices["Desktop Chrome"], channel: "chrome" } },
+    ...(process.env.E2E_FIREFOX === "1"
+      ? [{ name: "firefox", use: { ...devices["Desktop Firefox"] } }]
+      : []),
+  ],
 });
