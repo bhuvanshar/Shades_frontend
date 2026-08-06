@@ -34,3 +34,8 @@ test("explains an inverted price range instead of silently returning nothing", (
   expect(screen.getByRole("alert")).toHaveTextContent("Minimum price cannot exceed maximum price");
   expect(screen.getByText("Correct the price range to continue.")).toBeInTheDocument();
 });
+
+test("the listing card names the colourway its button will add", () => {
+  view();
+  expect(screen.getByRole("button", { name: "Add Barcelona Ocean in Blue to bag" })).toBeInTheDocument();
+});

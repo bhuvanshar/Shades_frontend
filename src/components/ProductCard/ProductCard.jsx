@@ -5,7 +5,7 @@ import { assets } from "../../assets/assets";
 import { StoreContext } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 
-const ProductCard = ({ id, name, price, image, color, isNew, variantId, available = true }) => {
+const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, isNew, variantId, stock, available = true }) => {
   const { cartItems, addToCart, removeFromCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -13,6 +13,12 @@ const ProductCard = ({ id, name, price, image, color, isNew, variantId, availabl
   const count = cartItems[cartKey] || 0;
   const saved = isWishlisted(id);
   const save = async () => { if (!user) return navigate("/signin"); try { await toggleWishlist(id); } catch (error) { window.alert(error.message); } };
+  // The card commits exactly one colourway, so it quotes that variant's own price and caps
+  // at that variant's own stock; the product-level minimum only appears as a "from" hint.
+  const unitPrice = variantPrice == null || !Number.isFinite(Number(variantPrice)) ? Number(price) : Number(variantPrice);
+  const cap = stock == null || !Number.isFinite(Number(stock)) ? null : Number(stock);
+  const inStock = available && cap !== 0;
+  const target = color ? `${name} in ${color}` : name;
 
   return (
     <div className="product-card">
@@ -29,20 +35,22 @@ const ProductCard = ({ id, name, price, image, color, isNew, variantId, availabl
           <p className="product-name">{name}</p>
         </Link>
         {color && <p className="product-color">{color}</p>}
-        <p className="product-price">₹{price.toLocaleString("en-IN")}</p>
+        <p className="product-price">₹{unitPrice.toLocaleString("en-IN")}</p>
+        {priceFrom != null && Number(priceFrom) < unitPrice && <p className="product-price-note">Other colours from ₹{Number(priceFrom).toLocaleString("en-IN")}</p>}
 
         <div className="product-card-actions">
           {count === 0 ? (
-            <button className="add-to-bag" aria-label={available ? `Add ${name} to bag` : `${name} is out of stock`} disabled={!variantId || !available} onClick={() => addToCart(id, variantId)}>
-              {available ? "Add to bag" : "Out of stock"}
+            <button className="add-to-bag" aria-label={inStock ? `Add ${target} to bag` : `${name} is out of stock`} disabled={!variantId || !inStock} onClick={() => addToCart(id, variantId)}>
+              {inStock ? (color ? `Add ${color} to bag` : "Add to bag") : "Out of stock"}
             </button>
           ) : (
             <div className="qty-control">
-              <button aria-label={`Decrease quantity of ${name}`} onClick={() => removeFromCart(id, variantId)}>
+              <button aria-label={`Decrease quantity of ${target}`} onClick={() => removeFromCart(id, variantId)}>
                 <img src={assets.remove_icon_red} alt="" />
               </button>
-              <span aria-live="polite" aria-label={`${count} in bag`}>{count}</span>
-              <button aria-label={`Increase quantity of ${name}`} onClick={() => addToCart(id, variantId)}>
+              <span aria-live="polite" aria-label={`${count} of ${target} in bag`}>{count}</span>
+              <button aria-label={cap !== null && count >= cap ? `No more ${target} available` : `Increase quantity of ${target}`}
+                disabled={cap !== null && count >= cap} onClick={() => addToCart(id, variantId)}>
                 <img src={assets.add_icon_green} alt="" />
               </button>
             </div>

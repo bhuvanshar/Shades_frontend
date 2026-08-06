@@ -254,3 +254,65 @@
     min-width: auto;
   }
 }
+
+/* ── Catalogue gates: a bag that cannot be priced yet must not read as empty ── */
+.cart-status {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.cart-status-error {
+  color: #7d2f29;
+}
+
+.cart-status button {
+  margin-top: 16px;
+  padding: 12px 28px;
+  border: 1px solid var(--border);
+  background: none;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+/* ── Degraded row for a line the catalogue can no longer resolve ── */
+.cart-item-unavailable {
+  background: #fbf7f3;
+}
+
+.cart-item-image-missing {
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--text-light);
+}
+
+.cart-item-qty-static {
+  border-style: dashed;
+  color: var(--text-light);
+  font-size: 12px;
+}
+
+.cart-summary-alert {
+  margin-bottom: 16px;
+  padding: 11px 12px;
+  border-left: 3px solid #9a3932;
+  background: #f7ecea;
+  color: #7d2f29;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.cart-checkout-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.cart-checkout-btn:disabled:hover {
+  opacity: 0.55;
+}

@@ -82,7 +82,7 @@ const ProductGrid = ({ category }) => {
             {invalidPriceRange && <p className="filter-error" role="alert">Minimum price cannot exceed maximum price.</p>}
           </aside>
           <div className="discovery-results">
-            <div className="product-grid-list">{!productsLoading && !productsError && filtered.map((item) => <ProductCard key={item._id} id={item._id} name={item.name} price={item.price} image={item.image} color={item.color} isNew={item.isNew} variantId={item.defaultVariantId} available={item.available} />)}</div>
+            <div className="product-grid-list">{!productsLoading && !productsError && filtered.map((item) => <ProductCard key={item._id} id={item._id} name={item.name} price={item.price} variantPrice={item.defaultVariantPrice} priceFrom={item.priceFrom} image={item.defaultVariantImage || item.image} color={item.color} isNew={item.isNew} variantId={item.defaultVariantId} stock={item.defaultVariantStock} available={item.available} />)}</div>
             {productsLoading && <p className="no-products">Loading the collection…</p>}
             {productsError && <p className="no-products" role="alert">The collection could not be loaded. Please try again shortly.</p>}
             {!productsLoading && !productsError && filtered.length === 0 && <div className="discovery-empty"><span>SW</span><h3>No matching styles</h3><p>{invalidPriceRange ? "Correct the price range to continue." : "Try removing a filter or searching with broader terms."}</p><button type="button" onClick={reset}>Reset discovery</button></div>}

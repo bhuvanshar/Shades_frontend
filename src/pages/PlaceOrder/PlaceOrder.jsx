@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useMemo, useState } from "react";
 import "./PlaceOrder.css";
-import { StoreContext } from "../../context/StoreContext";
+import { StoreContext, resolveCartLines } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 import { createAddress, createOrder, getAddresses, processMockPayment } from "../../services/api";
 import { Link, useNavigate } from "react-router-dom";
@@ -20,7 +20,7 @@ const shortDate = (value) => value.toLocaleDateString("en-IN", { day: "numeric",
 
 const PlaceOrder = () => {
   const { accessToken } = useAuth();
-  const { cartItems, product_list, getTotalCartAmount, appliedOffer, clearCartState, getCartCount, cartSyncing } = useContext(StoreContext);
+  const { cartItems, product_list, productsLoading, productsError, getTotalCartAmount, appliedOffer, clearCartState, getCartCount, cartSyncing } = useContext(StoreContext);
   const navigate = useNavigate();
   const [addresses, setAddresses] = useState([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
@@ -54,21 +54,19 @@ const PlaceOrder = () => {
   const shipping = subtotal === 0 || subtotal >= 500 ? 0 : 49;
   const estimatedTotal = taxable + tax + shipping;
   const itemCount = getCartCount();
-  const orderLines = useMemo(() => Object.entries(cartItems).map(([key, quantity]) => {
-    const [productId, variantId] = key.split(":");
-    const product = product_list.find((item) => item._id === productId);
-    if (!product) return null;
-    const variant = product.variants?.find((item) => String(item.variantId) === String(variantId));
-    const image = product.images?.find((item) => String(item.variantId) === String(variantId))?.imageUrl || product.image;
-    return { key, quantity, product, variant, image, price: Number(variant?.price ?? product.price),
-      color: variant?.attributes?.color || variant?.variantName || product.color };
-  }).filter(Boolean), [cartItems, product_list]);
+  // The same resolver the bag and the badge use: an unresolvable line is reviewed as such
+  // rather than vanishing from a checkout whose own summary still counts it.
+  const orderLines = useMemo(() => resolveCartLines(cartItems, product_list), [cartItems, product_list]);
+  const unavailableLines = orderLines.filter((line) => !line.resolved);
+  const catalogueBlocked = orderLines.length > 0 && product_list.length === 0 && (productsLoading || Boolean(productsError));
   const selectedAddress = useNewAddress ? address
     : addresses.find((item) => String(item.addressId) === selectedAddressId);
   const deliveryStart = shortDate(addBusinessDays(new Date(), 3));
   const deliveryEnd = shortDate(addBusinessDays(new Date(), 5));
   const canSubmit = useMemo(() => itemCount > 0 && !submitting && !loadingAddresses && !cartSyncing
-    && reviewConfirmed && (useNewAddress || selectedAddressId), [itemCount, submitting, loadingAddresses, cartSyncing, reviewConfirmed, useNewAddress, selectedAddressId]);
+    && unavailableLines.length === 0 && !catalogueBlocked
+    && reviewConfirmed && (useNewAddress || selectedAddressId),
+  [itemCount, submitting, loadingAddresses, cartSyncing, unavailableLines.length, catalogueBlocked, reviewConfirmed, useNewAddress, selectedAddressId]);
 
   useEffect(() => { setReviewConfirmed(false); }, [estimatedTotal, itemCount]);
 
@@ -160,13 +158,24 @@ const PlaceOrder = () => {
 
             <section className="checkout-review-section" aria-labelledby="checkout-items-heading">
               <div className="checkout-section-heading"><h2 id="checkout-items-heading">Items in this order</h2><Link to="/cart">Edit bag</Link></div>
-              <div className="checkout-review-items">{orderLines.map((line) => (
+              {catalogueBlocked && <p className="checkout-note" role="status">{productsLoading
+                ? "Loading the items in your bag…"
+                : "The catalogue could not be loaded, so these items cannot be priced. Return to your bag and try again."}</p>}
+              {!catalogueBlocked && <div className="checkout-review-items">{orderLines.map((line) => (line.resolved ? (
                 <article key={line.key} className="checkout-review-item">
                   <img src={line.image} alt="" />
                   <div><strong>{line.product.name}</strong><span>{line.color}{line.variant?.sku && ` · ${line.variant.sku}`}</span><small>Quantity {line.quantity} × {money(line.price)}</small></div>
                   <b>{money(line.price * line.quantity)}</b>
                 </article>
-              ))}</div>
+              ) : (
+                <article key={line.key} className="checkout-review-item checkout-review-unavailable">
+                  <span className="checkout-review-no-image" aria-hidden="true">SW</span>
+                  <div><strong>{line.title}</strong><span>{line.unavailableReason}{line.variantId ? ` · ref ${line.variantId}` : ""}</span><small>Quantity {line.quantity} · not included in this order</small></div>
+                  <b>—</b>
+                </article>
+              )))}</div>}
+              {unavailableLines.length > 0 && <p className="checkout-error" role="alert">
+                {unavailableLines.length === 1 ? "1 item in your bag is" : `${unavailableLines.length} items in your bag are`} no longer available, so this order cannot be placed. <Link to="/cart">Remove {unavailableLines.length === 1 ? "it" : "them"} in your bag</Link> to continue.</p>}
             </section>
           </div>
 

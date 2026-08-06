@@ -306,3 +306,40 @@
 .pd-gallery {
   display: none;
 }
+
+/* Photo control, deliberately outside .pd-variant-options: only the colour row is
+   allowed to look "chosen", so a highlighted photo toggle can never read as the
+   thing being added to the bag. Disabled while the primary photo is already up,
+   which is also what stops the click being a silent no-op on load. */
+.pd-photo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pd-photo-toggle img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  background: var(--bg-sand);
+}
+
+.pd-photo-toggle:disabled {
+  background: var(--bg-sand);
+  color: var(--text-light);
+  cursor: default;
+}
+
+.pd-variant-options small.pd-variant-in-bag {
+  color: #397048;
+  font-weight: 500;
+}

@@ -67,6 +67,12 @@
   margin-bottom: 12px;
 }
 
+.product-price-note {
+  font-size: 11px;
+  color: var(--text-light);
+  margin: -8px 0 12px;
+}
+
 /* ── Add to bag button ── */
 .product-card-actions {
   display: flex;

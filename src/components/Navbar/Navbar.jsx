@@ -10,7 +10,7 @@ import NotificationBell from "../NotificationBell/NotificationBell";
 const Navbar = () => {
   const [menu, setMenu] = useState("home");
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { getCartCount, wishlistItems } = useContext(StoreContext);
+  const { getCartCount, wishlistItems, cartError } = useContext(StoreContext);
   const { user, isAdmin, signOut } = useAuth();
 
   const cartCount = getCartCount();
@@ -114,6 +114,7 @@ const Navbar = () => {
           ) : <Link className="nav-account" to="/signin">Sign in</Link>}
         </div>
       </div>
+      {cartError && <p className="navbar-cart-error" role="alert">{cartError} <Link to="/cart" onClick={closeMenu}>Review your bag</Link></p>}
     </nav>
   );
 };

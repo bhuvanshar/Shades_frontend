@@ -191,6 +191,9 @@
 .checkout-review-item strong { margin-bottom: 5px; font-size: 13px; }
 .checkout-review-item span, .checkout-review-item small { color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .checkout-review-item b { font-size: 12px; }
+.checkout-review-unavailable { background: #fbf7f3; }
+.checkout-review-unavailable strong { color: #7d2f2a; }
+.checkout-review-item .checkout-review-no-image { display: grid; place-items: center; width: 100%; aspect-ratio: 1 / 1; background: var(--bg-sand); color: var(--text-light); font-size: 11px; letter-spacing: 2px; }
 .checkout-confirmation-card { margin: 14px 0; padding: 14px; border: 1px solid rgba(66,63,55,.16); background: rgba(255,255,255,.55); }
 .checkout-confirmation-card span, .checkout-confirmation-card strong { display: block; }
 .checkout-confirmation-card span { margin-bottom: 5px; color: #816b4b; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
