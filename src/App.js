@@ -16,6 +16,8 @@ import Wishlist from "./pages/Wishlist/Wishlist";
 import Account from "./pages/Account/Account";
 import Notifications from "./pages/Notifications/Notifications";
 import StoreInfo from "./pages/StoreInfo/StoreInfo";
+import Shop from "./pages/Shop/Shop";
+import Collections from "./pages/Collections/Collections";
 
 const ScrollToTop = () => {
   const { pathname, hash } = useLocation();
@@ -70,6 +72,10 @@ const App = () => {
       <Route path="*" element={<>
         <div className="app"><PromoBar /><Navbar /><Routes>
           <Route path="/" element={<Home />} />
+          {/* Inside the inner Routes so both pages keep the Navbar, PromoBar and Footer. */}
+          <Route path="/shop" element={<Shop />} />
+          <Route path="/collections" element={<Collections />} />
+          <Route path="/collections/:collection" element={<Collections />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
           <Route path="/product/:id" element={<ProductDetail />} />

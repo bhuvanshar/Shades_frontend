@@ -219,3 +219,11 @@
   .checkout-review-item img { width: 58px; height: 58px; }
   .checkout-review-item b { grid-column: 2; }
 }
+
+.checkout-field-error {
+  display: block;
+  margin-top: 5px;
+  color: #9a3d32;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+}

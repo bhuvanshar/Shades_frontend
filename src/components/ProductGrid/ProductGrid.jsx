@@ -7,9 +7,10 @@ import ProductCard from "../ProductCard/ProductCard";
 const text = (value) => String(value || "").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const SORTS = new Set(["featured", "newest", "price-low", "price-high", "name"]);
+const PAGE_SIZE = 12;
 
 const ProductGrid = ({ category }) => {
-  const { product_list, productsLoading, productsError } = useContext(StoreContext);
+  const { product_list, productsLoading, productsError, refreshProducts } = useContext(StoreContext);
   const [params, setParams] = useSearchParams();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const query = params.get("q") || "";
@@ -25,6 +26,9 @@ const ProductGrid = ({ category }) => {
     const next = new URLSearchParams(params);
     if (!value || value === defaultValue) next.delete(name);
     else next.set(name, value);
+    // Any filter or sort change invalidates the page number: narrowing the results would
+    // otherwise strand the shopper on a page that no longer exists.
+    if (name !== "page") next.delete("page");
     setParams(next, { replace: true });
   };
   const reset = () => setParams(new URLSearchParams(), { replace: true });
@@ -60,6 +64,14 @@ const ProductGrid = ({ category }) => {
       return Number(b.available) - Number(a.available) || Number(b.productId) - Number(a.productId);
     });
   }, [availability, brand, category, color, maxPrice, minPrice, product_list, query, sort]);
+  // Pagination is client-side on purpose: product_list is one global cache that Cart, PlaceOrder,
+  // ProductDetail and Wishlist all need to be complete, so it cannot be fetched a page at a time.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const requestedPage = Number.parseInt(params.get("page") || "1", 10);
+  // An out-of-range or junk ?page lands on the nearest real page instead of an empty grid.
+  const page = Number.isFinite(requestedPage) ? Math.min(Math.max(requestedPage, 1), totalPages) : 1;
+  const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const goToPage = (next) => setFilter("page", next <= 1 ? "" : String(next));
   const invalidPriceRange = minPrice !== "" && maxPrice !== "" && Number(minPrice) > Number(maxPrice);
   const activeFilters = [query, brand !== "All", color !== "All", availability !== "all", minPrice, maxPrice, category !== "All"].filter(Boolean).length;
 
@@ -82,9 +94,22 @@ const ProductGrid = ({ category }) => {
             {invalidPriceRange && <p className="filter-error" role="alert">Minimum price cannot exceed maximum price.</p>}
           </aside>
           <div className="discovery-results">
-            <div className="product-grid-list">{!productsLoading && !productsError && filtered.map((item) => <ProductCard key={item._id} id={item._id} name={item.name} price={item.price} variantPrice={item.defaultVariantPrice} priceFrom={item.priceFrom} image={item.defaultVariantImage || item.image} color={item.color} isNew={item.isNew} variantId={item.defaultVariantId} stock={item.defaultVariantStock} available={item.available} />)}</div>
+            <div className="product-grid-list">{!productsLoading && !productsError && visible.map((item) => <ProductCard key={item._id} id={item._id} name={item.name} price={item.price} variantPrice={item.defaultVariantPrice} priceFrom={item.priceFrom} image={item.defaultVariantImage || item.image} color={item.color} isNew={item.isNew} variantId={item.defaultVariantId} stock={item.defaultVariantStock} available={item.available} />)}</div>
+            {/* Hidden at a single page: a lone "1" control is noise, not navigation. */}
+            {!productsLoading && !productsError && totalPages > 1 && <nav className="product-pagination" aria-label="Product pages">
+              <button type="button" disabled={page <= 1} onClick={() => goToPage(page - 1)}>← Previous</button>
+              <ul>{Array.from({ length: totalPages }, (unused, index) => index + 1).map((number) => <li key={number}>
+                <button type="button" className={number === page ? "current" : ""}
+                  aria-current={number === page ? "page" : undefined}
+                  aria-label={`Page ${number} of ${totalPages}`} onClick={() => goToPage(number)}>{number}</button>
+              </li>)}</ul>
+              <button type="button" disabled={page >= totalPages} onClick={() => goToPage(page + 1)}>Next →</button>
+            </nav>}
             {productsLoading && <p className="no-products">Loading the collection…</p>}
-            {productsError && <p className="no-products" role="alert">The collection could not be loaded. Please try again shortly.</p>}
+            {productsError && <div className="no-products products-error" role="alert">
+              <p>The collection could not be loaded. Please try again shortly.</p>
+              <button type="button" onClick={refreshProducts}>Try again</button>
+            </div>}
             {!productsLoading && !productsError && filtered.length === 0 && <div className="discovery-empty"><span>SW</span><h3>No matching styles</h3><p>{invalidPriceRange ? "Correct the price range to continue." : "Try removing a filter or searching with broader terms."}</p><button type="button" onClick={reset}>Reset discovery</button></div>}
           </div>
         </div>

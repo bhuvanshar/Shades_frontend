@@ -8,8 +8,8 @@ const money = (value) => `₹${Number(value || 0).toLocaleString("en-IN", { mini
 export default function Wishlist() {
   const { wishlistItems, wishlistLoading, toggleWishlist, product_list, addToCart } = useContext(StoreContext);
   return <main className="wishlist-page"><div className="container">
-    <header className="wishlist-header"><div><span>Your collection</span><h1>Wishlist</h1><p>Pieces you saved for another look.</p></div><Link to="/#shop">Continue shopping</Link></header>
-    {wishlistLoading ? <div className="wishlist-empty">Loading your saved collection…</div> : wishlistItems.length === 0 ? <div className="wishlist-empty"><b>♡</b><h2>Your wishlist is empty</h2><p>Tap the heart on any frame to save it here.</p><Link to="/#shop">Explore eyewear</Link></div> : <section className="wishlist-grid">{wishlistItems.map((item) => {
+    <header className="wishlist-header"><div><span>Your collection</span><h1>Wishlist</h1><p>Pieces you saved for another look.</p></div><Link to="/shop">Continue shopping</Link></header>
+    {wishlistLoading ? <div className="wishlist-empty">Loading your saved collection…</div> : wishlistItems.length === 0 ? <div className="wishlist-empty"><b>♡</b><h2>Your wishlist is empty</h2><p>Tap the heart on any frame to save it here.</p><Link to="/shop">Explore eyewear</Link></div> : <section className="wishlist-grid">{wishlistItems.map((item) => {
       const product = product_list.find((value) => String(value.productId) === String(item.productId));
       const availableVariants = (product?.variants || []).filter((value) => value.isActive && Number(value.quantityAvailable) > 0).sort((a, b) => Number(a.price) - Number(b.price));
       const exactVariant = availableVariants.length === 1 ? availableVariants[0] : null;

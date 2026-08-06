@@ -3,6 +3,7 @@ import "./PlaceOrder.css";
 import { StoreContext, resolveCartLines } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 import { createAddress, createOrder, getAddresses, processMockPayment } from "../../services/api";
+import { pincodeError, sanitisePincode } from "../../services/pincode";
 import { Link, useNavigate } from "react-router-dom";
 
 const emptyAddress = {
@@ -63,16 +64,25 @@ const PlaceOrder = () => {
     : addresses.find((item) => String(item.addressId) === selectedAddressId);
   const deliveryStart = shortDate(addBusinessDays(new Date(), 3));
   const deliveryEnd = shortDate(addBusinessDays(new Date(), 5));
+  // Only validated for a new address; a saved one was already validated server-side when stored.
+  const newAddressPincodeError = useNewAddress ? pincodeError(address.pincode, address.country) : "";
   const canSubmit = useMemo(() => itemCount > 0 && !submitting && !loadingAddresses && !cartSyncing
-    && unavailableLines.length === 0 && !catalogueBlocked
+    && unavailableLines.length === 0 && !catalogueBlocked && !newAddressPincodeError
     && reviewConfirmed && (useNewAddress || selectedAddressId),
-  [itemCount, submitting, loadingAddresses, cartSyncing, unavailableLines.length, catalogueBlocked, reviewConfirmed, useNewAddress, selectedAddressId]);
+  [itemCount, submitting, loadingAddresses, cartSyncing, unavailableLines.length, catalogueBlocked, newAddressPincodeError, reviewConfirmed, useNewAddress, selectedAddressId]);
 
   useEffect(() => { setReviewConfirmed(false); }, [estimatedTotal, itemCount]);
 
   const changeAddress = (field) => (event) => {
     setReviewConfirmed(false);
     setAddress((current) => ({ ...current, [field]: event.target.value }));
+  };
+  // Sanitised on the way in rather than validated on the way out, so typed letters and pasted
+  // junk simply never enter the field. Kept as a string so a leading zero survives.
+  const changePincode = (event) => {
+    setReviewConfirmed(false);
+    const digits = sanitisePincode(event.target.value, address.country);
+    setAddress((current) => ({ ...current, pincode: digits }));
   };
 
   const submit = async (event) => {
@@ -103,11 +113,18 @@ const PlaceOrder = () => {
       await processMockPayment(accessToken, createdOrder.orderId);
       setPendingOrderId(null);
       clearCartState();
+      // The order deducted stock server-side, so every cached quantity in product_list is now
+      // stale — without this the shopper sees the pre-purchase stock until a full page reload,
+      // and the Add buttons keep offering units that no longer exist.
+      window.dispatchEvent(new Event("shades:products-changed"));
       navigate("/my-orders", { replace: true, state: { checkoutComplete: true, orderId: createdOrder.orderId } });
     } catch (requestError) {
       setError(createdOrder
         ? `Order #${createdOrder.orderId} was created, but payment confirmation was interrupted: ${requestError.message}. Use the retry button below; you will not be charged twice.`
         : requestError.message);
+      // A rejected order is usually a stock rejection, and the quantities on screen are exactly
+      // what the shopper needs corrected before retrying. Refetch so the bag shows real stock.
+      if (!createdOrder) window.dispatchEvent(new Event("shades:products-changed"));
     } finally {
       setSubmitting(false);
     }
@@ -149,7 +166,12 @@ const PlaceOrder = () => {
                   <input value={address.state} onChange={changeAddress("state")} type="text" placeholder="State" maxLength="100" required />
                 </div>
                 <div className="field-row">
-                  <input value={address.pincode} onChange={changeAddress("pincode")} type="text" placeholder="PIN code" maxLength="20" required />
+                  <input value={address.pincode} onChange={changePincode} type="text" inputMode="numeric"
+                    autoComplete="postal-code" pattern="[0-9]*" placeholder="PIN code"
+                    aria-label="PIN code"
+                    aria-invalid={Boolean(newAddressPincodeError)} aria-describedby={newAddressPincodeError ? "checkout-pincode-error" : undefined}
+                    required />
+                  {newAddressPincodeError && <small id="checkout-pincode-error" className="checkout-field-error" role="alert">{newAddressPincodeError}</small>}
                   <input value={address.country} onChange={changeAddress("country")} type="text" placeholder="Country" maxLength="100" required />
                 </div>
                 {addresses.length > 0 && <button type="button" className="new-address-toggle" onClick={() => { setReviewConfirmed(false); setUseNewAddress(false); }}>Use a saved address</button>}

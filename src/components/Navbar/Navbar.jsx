@@ -57,7 +57,7 @@ const Navbar = () => {
           </li>
           <li>
             <Link
-              to="/#shop"
+              to="/shop"
               onClick={() => { setMenu("shop"); closeMenu(); }}
               className={menu === "shop" ? "active" : ""}
             >
@@ -66,7 +66,7 @@ const Navbar = () => {
           </li>
           <li>
             <Link
-              to="/#collections"
+              to="/collections"
               onClick={() => { setMenu("collections"); closeMenu(); }}
               className={menu === "collections" ? "active" : ""}
             >

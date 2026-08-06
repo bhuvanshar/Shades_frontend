@@ -22,7 +22,7 @@ const Home = () => {
       <Hero />
       <CategoryFilter category={category} setCategory={setCategory} />
       <ProductGrid category={category} />
-      <CollectionShowcase setCategory={setCategory} />
+      <CollectionShowcase />
       <TrustStrip />
     </div>
   );
