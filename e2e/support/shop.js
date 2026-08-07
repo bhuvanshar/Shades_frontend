@@ -40,7 +40,13 @@ const checkout = async (page, { account, pincode = "560001", country = "India" }
   await expect(page.locator(".checkout-pay-btn"),
     "checkout should see a non-empty bag — an empty one means an add-to-cart POST was lost")
     .not.toContainText("₹0", { timeout: 20_000 });
-  await fillCheckoutAddress(page, { pincode, country });
+  // A customer who has checked out before already has a saved address, so PlaceOrder shows the
+  // saved-address picker instead of the new-address form and there is nothing to fill. Filling
+  // unconditionally is what made a second checkout for the same account time out on a field that
+  // was never rendered.
+  if (await page.getByPlaceholder("Recipient name").count()) {
+    await fillCheckoutAddress(page, { pincode, country });
+  }
   await page.locator(".checkout-confirm input[type=checkbox]").check();
   // PlaceOrder unticks the confirm box whenever the total changes, and the total moves again when
   // the catalogue request resolves after the cart one. Waiting for the button to enable turns a

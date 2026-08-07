@@ -60,8 +60,13 @@ test("the photo control sits outside the color row and is inert-proof while the 
   expect(tiles[0]).toHaveTextContent("GGG");
   expect(tiles[0].className).toBe("active");
   expect(container.querySelector(".pd-variant-options .pd-photo-toggle")).toBeNull();
-  // On load the primary photo is already showing, so the control must say so and not
-  // offer a click that changes nothing.
+  // On load the page now shows the SELECTED VARIANT's photo, not the product's primary one — the
+  // hero has to depict the colourway being quoted and sold, which is the whole point of the
+  // default-variant rule. So the control is live and offers the primary product shot...
+  expect(photoToggle()).toBeEnabled();
+  expect(photoToggle()).toHaveTextContent(/view the primary photo/i);
+  // ...and only once that shot is up does it go inert, because then it changes nothing.
+  fireEvent.click(photoToggle());
   expect(photoToggle()).toBeDisabled();
   expect(photoToggle()).toHaveTextContent(/showing the primary photo/i);
 });

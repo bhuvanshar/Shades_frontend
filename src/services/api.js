@@ -157,6 +157,18 @@ export const getStoreProducts = async () => {
 };
 
 /**
+ * The Best Sellers ranking. Public, so no credentials.
+ *
+ * Returns [{ product, soldQuantity, soldRevenue }] already ordered by the server — the order is
+ * the answer, so callers must not re-sort it. Eligibility, refund handling and tie-breaking all
+ * live in ProductRepository.findBestSellers; the client only renders what it is given.
+ */
+export const getBestSellers = async (limit = 20) => {
+  const response = await fetch(`${API_URL}/products/best-sellers?limit=${encodeURIComponent(limit)}`);
+  return parseResponse(response);
+};
+
+/**
  * Signing out is idempotent by definition: the goal is "this browser no longer holds a session",
  * and a server that rejects the call because the session or CSRF pair is already gone has, in
  * effect, already achieved that.

@@ -21,9 +21,53 @@ export const listingPrice = (variantPrice, productPrice) => (
 // null means "unknown", which is never the same thing as zero or as unlimited.
 const finiteOrNull = (value) => (value !== null && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null);
 
-const mapProduct = (product) => {
-  const variants = (product.variants || []).filter((variant) => variant.isActive);
-  const firstVariant = variants.find((variant) => Number(variant.quantityAvailable) > 0) || variants[0];
+// ── Default variant selection ────────────────────────────────────────────────────────────────
+// One rule, used by the listing card (through mapProduct) and by the product page, so the colour
+// a card commits to and the colour the product page opens on can never disagree.
+//
+// "Purchasable" is the only thing that makes a variant eligible to be selected automatically:
+// active, and with stock. Ordering is by variantId rather than by array position — the API's list
+// order is now pinned by @OrderBy on the entity, but a selection rule that silently depends on
+// arrival order is exactly the kind that works until a query changes underneath it.
+export const purchasableVariants = (variants) => (variants || [])
+  .filter((variant) => variant.isActive !== false && Number(variant.quantityAvailable) > 0)
+  .sort((first, second) => Number(first.variantId) - Number(second.variantId));
+
+/**
+ * The variant a surface should open on.
+ *
+ * `requestedVariantId` is a deep link (?variant=). It wins only when it names a variant that is
+ * genuinely purchasable; an unknown, inactive or out-of-stock request falls back to the first
+ * eligible variant rather than honouring a link to something nobody can buy. Returns null when
+ * nothing is purchasable, which is the sold-out state — deliberately not "variant zero", because
+ * pretending some variant is available is the bug this rule exists to prevent.
+ */
+export const selectDefaultVariant = (variants, requestedVariantId) => {
+  const eligible = purchasableVariants(variants);
+  const requested = requestedVariantId == null || requestedVariantId === ""
+    ? undefined
+    : eligible.find((variant) => String(variant.variantId) === String(requestedVariantId));
+  return requested || eligible[0] || null;
+};
+
+/** The photo that belongs to a variant, falling back to the product's own primary/general shot. */
+export const imageForVariant = (product, variant) => (variant
+  && product?.images?.find((image) => String(image.variantId) === String(variant.variantId)))
+  || product?.images?.find((image) => image.isPrimary)
+  || product?.images?.find((image) => !image.variantId)
+  || product?.images?.[0];
+
+// Exported so any surface rendering a product card — the discovery grid, Best Sellers — derives
+// its price, default variant, stock and New badge from the same mapping. A second mapper is how
+// two cards for the same product end up disagreeing.
+export const mapProduct = (product) => {
+  // Sorted here too, so the variant tiles, the colour filter and the selection rule all iterate
+  // the same order regardless of what the API hands back.
+  const variants = (product.variants || []).filter((variant) => variant.isActive)
+    .sort((first, second) => Number(first.variantId) - Number(second.variantId));
+  // Falls back to variants[0] only for DISPLAY: a fully sold-out product still needs a colour and
+  // a price on its card. `available` below is what gates the buy button.
+  const firstVariant = selectDefaultVariant(variants) || variants[0];
   const prices = variants.map((variant) => Number(variant.price)).filter(Number.isFinite);
   const lowestPrice = prices.length ? Math.min(...prices) : Number(product.basePrice);
   const primaryImage = product.images?.find((image) => image.isPrimary)
@@ -58,7 +102,14 @@ const mapProduct = (product) => {
     priceFrom: defaultVariantPrice !== null && lowestPrice < defaultVariantPrice ? lowestPrice : null,
     available: variants.some((variant) => Number(variant.quantityAvailable) > 0),
     attributes: product.attributes || {},
-    isNew: product.createdAt ? Date.now() - new Date(product.createdAt).getTime() < 30 * 86400000 : false,
+    // Taken from the API, never recomputed. This used to be
+    //   Date.now() - new Date(product.createdAt) < 30 * 86400000
+    // which measured from the row's creation rather than its publication, hard-coded the window,
+    // and ran against the customer's own system clock after parsing a zone-less server timestamp
+    // as browser-local time. The rule now lives in NewProductPolicy on the server — see
+    // app.catalog.new-product-days — so every surface renders the same badge.
+    isNew: product.isNew === true,
+    publishedAt: product.publishedAt || null,
   };
 };
 

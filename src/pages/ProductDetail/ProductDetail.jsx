@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import "./ProductDetail.css";
-import { StoreContext, variantLabel } from "../../context/StoreContext";
+import { StoreContext, imageForVariant, selectDefaultVariant, variantLabel } from "../../context/StoreContext";
 import ProductReviews from "../../components/ProductReviews/ProductReviews";
 import { useAuth } from "../../context/AuthContext";
 
@@ -10,30 +10,38 @@ export default function ProductDetail() {
   const { product_list, productsLoading, cartItems, addToCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const product = product_list.find((item) => item._id === id);
   const [activeTab, setActiveTab] = useState("description");
   const [selectedVariantId, setSelectedVariantId] = useState(null);
   const [activeImage, setActiveImage] = useState("");
+  const requestedVariantId = params.get("variant");
+
+  // The variant this URL resolves to, by the one shared rule. An in-stock ?variant= wins; an
+  // unknown, inactive or out-of-stock one falls back to the first purchasable variant; null means
+  // genuinely nothing is buyable.
+  const resolvedVariant = useMemo(
+    () => (product ? selectDefaultVariant(product.variants, requestedVariantId) : null),
+    [product, requestedVariantId]
+  );
 
   useEffect(() => {
     if (!product) return;
-    const firstVariant = product.variants?.find((variant) => variant.variantId === product.defaultVariantId)
-      || product.variants?.find((variant) => Number(variant.quantityAvailable) > 0) || product.variants?.[0];
-    setSelectedVariantId(firstVariant?.variantId || null);
-    const firstImage = product.images?.find((image) => image.isPrimary)
-      || product.images?.find((image) => !image.variantId)
-      || product.images?.find((image) => image.variantId === firstVariant?.variantId)
-      || product.images?.[0];
-    setActiveImage(firstImage?.imageUrl || product.image);
-  }, [product]);
+    // variants[0] only when nothing is purchasable: the sold-out page still has to name a colour.
+    const initial = resolvedVariant || product.variants?.[0] || null;
+    setSelectedVariantId(initial?.variantId ?? null);
+    // The hero photo follows the SELECTED variant, not the product's primary image. It used to
+    // lead with isPrimary, so a product whose primary shot belonged to a sold-out colourway
+    // opened showing that colourway while quoting the price, SKU and stock of a different one.
+    setActiveImage(imageForVariant(product, initial)?.imageUrl || product.image || "");
+  }, [product, resolvedVariant]);
 
   // The primary photo is a view of the product, not a purchasable option: it only
   // drives the hero image, while selectedVariant stays the single purchase target.
-  // A stale selectedVariantId (kept across a related-product link) resolves to this
-  // product's default variant rather than to whichever variant happens to be first.
+  // A stale selectedVariantId (kept across a related-product link) resolves through the shared
+  // rule rather than to whichever variant happens to be first.
   const selectedVariant = product?.variants?.find((variant) => variant.variantId === selectedVariantId)
-    || product?.variants?.find((variant) => variant.variantId === product?.defaultVariantId)
-    || product?.variants?.[0];
+    || resolvedVariant || product?.variants?.[0];
   const mainImage = product?.images?.find((image) => image.isPrimary)
     || product?.images?.find((image) => !image.variantId) || product?.images?.[0];
   const viewingMain = activeImage === (mainImage?.imageUrl || product?.image);
@@ -49,6 +57,18 @@ export default function ProductDetail() {
     setSelectedVariantId(variant.variantId);
     const image = product.images.find((item) => item.variantId === variant.variantId) || mainImage;
     setActiveImage(image?.imageUrl || product.image);
+    // Reflect the choice in the URL so a refresh, a share or Back/Forward lands on the same
+    // colourway. `replace` because a colour swatch is not a navigation step — pushing would make
+    // Back walk the customer through their own clicks instead of leaving the product page.
+    //
+    // Only purchasable variants are written. selectDefaultVariant deliberately refuses to honour
+    // a request for something out of stock, so writing one would round-trip straight back to the
+    // fallback and fight this component's own state.
+    if (Number(variant.quantityAvailable) > 0 && variant.isActive !== false) {
+      const next = new URLSearchParams(params);
+      next.set("variant", String(variant.variantId));
+      setParams(next, { replace: true });
+    }
   };
   const showMainProduct = () => setActiveImage(mainImage?.imageUrl || product.image);
 
