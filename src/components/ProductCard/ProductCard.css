@@ -144,3 +144,6 @@
   color: #397048;
   text-align: center;
 }
+
+/* Wishlist failure, shown on the card instead of in a native alert. */
+.product-card-error{margin-top:4px;color:#8b332a;font-size:11px;line-height:1.4}

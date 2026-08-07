@@ -15,6 +15,7 @@ export default function ProductDetail() {
   const [activeTab, setActiveTab] = useState("description");
   const [selectedVariantId, setSelectedVariantId] = useState(null);
   const [activeImage, setActiveImage] = useState("");
+  const [wishlistError, setWishlistError] = useState("");
   const requestedVariantId = params.get("variant");
 
   // The variant this URL resolves to, by the one shared rule. An in-stock ?variant= wins; an
@@ -87,7 +88,12 @@ export default function ProductDetail() {
   const ambiguous = (variant) => labelUses[variantLabel(variant)] > 1;
   const addLabel = selectedVariant && ambiguous(selectedVariant) ? `${color} (${selectedVariant.sku})` : color;
   const saved = isWishlisted(id);
-  const saveProduct = async () => { if (!user) return navigate("/signin"); try { await toggleWishlist(id); } catch (error) { window.alert(error.message); } };
+  // Inline, not window.alert — see the matching note in ProductCard.
+  const saveProduct = async () => {
+    if (!user) return navigate("/signin");
+    setWishlistError("");
+    try { await toggleWishlist(id); } catch (error) { setWishlistError(error.message); }
+  };
 
   // ── The three tabs, all keyed off the selected variant ────────────────────────────────
   // Description: a variant may carry its own copy; otherwise it inherits the product's, and
@@ -138,6 +144,7 @@ export default function ProductDetail() {
         {available <= 0 ? "Out of stock" : count >= available ? `All ${available} in your bag` : `Add ${addLabel} to bag`}
       </button>
       {count > 0 && <Link to="/cart" className="pd-view-cart">View bag →</Link>}
+      {wishlistError && <p className="pd-wishlist-error" role="alert">{wishlistError}</p>}
     </div>
     <div className="pd-tabs">
       <button className={activeTab === "description" ? "active" : ""} onClick={() => setActiveTab("description")}>Description</button>

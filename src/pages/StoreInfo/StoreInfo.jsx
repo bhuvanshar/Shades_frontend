@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import "./StoreInfo.css";
+import ContactCareDialog from "../../components/ContactCareDialog/ContactCareDialog";
 
 const pages = {
   about: {
@@ -95,6 +96,8 @@ const pages = {
 const StoreInfo = () => {
   const { page } = useParams();
   const content = pages[page];
+  // Declared before the not-found return below, so the hook order is stable across both branches.
+  const [contactOpen, setContactOpen] = useState(false);
   if (!content) return <main className="info-page"><div className="info-shell info-missing"><h1>Page not found</h1><Link to="/">Return home</Link></div></main>;
   return <main className="info-page">
     <header className="info-hero"><div className="info-shell"><span>{content.eyebrow}</span><h1>{content.title}</h1><p>{content.intro}</p></div></header>
@@ -106,9 +109,15 @@ const StoreInfo = () => {
         {content.sections?.map(([title, text]) => <section key={title}><h2>{title}</h2><p>{text}</p></section>)}
         {content.faq?.map(([question, answer]) => <details key={question}><summary>{question}</summary><p>{answer}</p></details>)}
         {content.action && <Link className="info-action" to={content.action[1]}>{content.action[0]} <span>→</span></Link>}
-        <div className="info-note"><strong>Need more help?</strong><p>Contact customer care and include your order number where relevant.</p><Link to="/info/contact">Contact us</Link></div>
+        {/* A button, not a Link. This was <Link to="/info/contact">, which on the contact page
+            itself pointed at the page already open — so the action appeared dead. Opening the
+            care sheet is also the more direct answer on every other info page, so both cases get
+            the same behaviour instead of one navigating and one doing nothing. */}
+        <div className="info-note"><strong>Need more help?</strong><p>Contact customer care and include your order number where relevant.</p>
+          <button type="button" className="info-note-contact" onClick={() => setContactOpen(true)}>Contact us</button></div>
       </article>
     </div>
+    <ContactCareDialog open={contactOpen} onClose={() => setContactOpen(false)} />
   </main>;
 };
 

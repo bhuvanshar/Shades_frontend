@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { getAdminCustomers, setCustomerActive } from "../../services/api";
 import "./AdminOperations.css";
+import useConfirmAction from "../../hooks/useConfirmAction";
 const money = (v) =>
   `₹${Number(v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 const date = (v) =>
@@ -14,6 +15,7 @@ const date = (v) =>
     : "Never";
 export default function AdminCustomers() {
   const { accessToken, user } = useAuth();
+  const confirmAction = useConfirmAction();
   const [customers, setCustomers] = useState([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -51,15 +53,14 @@ export default function AdminCustomers() {
       }),
     [customers, query, filter],
   );
-  const toggle = async (customer) => {
+  const toggle = (customer) => {
     const active = !customer.isActive;
-    if (
-      !window.confirm(
-        `${active ? "Reactivate" : "Deactivate"} ${customer.name}?`,
-      )
-    )
-      return;
-    try {
+    return confirmAction.ask({
+      title: `${active ? "Reactivate" : "Deactivate"} this customer?`,
+      body: <p><strong>{customer.name}</strong> will {active ? "be able to sign in and place orders again" : "no longer be able to sign in. Existing orders are unaffected"}.</p>,
+      confirmLabel: active ? "Reactivate" : "Deactivate",
+      busyLabel: "Saving…",
+      run: async () => {
       const updated = await setCustomerActive(
         accessToken,
         customer.userId,
@@ -70,12 +71,12 @@ export default function AdminCustomers() {
       );
       setSelected(updated);
       setNotice(`${updated.name} is now ${active ? "active" : "inactive"}.`);
-    } catch (e) {
-      setError(e.message);
-    }
+      },
+    });
   };
   return (
     <section className="ops-admin">
+      {confirmAction.dialog}
       {error && <div className="admin-alert error">{error}</div>}
       {notice && <div className="admin-alert success">{notice}</div>}
       <div className="ops-title">

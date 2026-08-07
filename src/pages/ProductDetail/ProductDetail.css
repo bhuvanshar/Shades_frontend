@@ -367,3 +367,6 @@
     font-size: 12px;
   }
 }
+
+/* Wishlist failure, shown in the actions block instead of in a native alert. */
+.pd-wishlist-error{flex-basis:100%;margin-top:6px;color:#8b332a;font-size:12px;line-height:1.5}

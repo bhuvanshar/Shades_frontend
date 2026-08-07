@@ -1,4 +1,4 @@
-import React, { useContext } from "react";
+import React, { useContext, useState } from "react";
 import "./ProductCard.css";
 import { Link, useNavigate } from "react-router-dom";
 import { StoreContext, listingPrice } from "../../context/StoreContext";
@@ -11,7 +11,14 @@ const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, i
   const cartKey = variantId ? `${id}:${variantId}` : String(id);
   const count = cartItems[cartKey] || 0;
   const saved = isWishlisted(id);
-  const save = async () => { if (!user) return navigate("/signin"); try { await toggleWishlist(id); } catch (error) { window.alert(error.message); } };
+  // Inline status rather than window.alert: a native alert blocks the whole tab for a failure that
+  // belongs to one card, and it cannot be styled, dismissed by Escape or read in context.
+  const [saveError, setSaveError] = useState("");
+  const save = async () => {
+    if (!user) return navigate("/signin");
+    setSaveError("");
+    try { await toggleWishlist(id); } catch (error) { setSaveError(error.message); }
+  };
   // The card commits exactly one colourway, so it quotes that variant's own price and caps
   // at that variant's own stock; the product-level minimum only appears as a "from" hint.
   // The rule lives in StoreContext because ProductGrid's sort has to order by this exact number.
@@ -37,6 +44,7 @@ const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, i
         </Link>
         {color && <p className="product-color">{color}</p>}
         <p className="product-price">₹{unitPrice.toLocaleString("en-IN")}</p>
+        {saveError && <p className="product-card-error" role="alert">{saveError}</p>}
         {priceFrom != null && Number(priceFrom) < unitPrice && <p className="product-price-note">Other colours from ₹{Number(priceFrom).toLocaleString("en-IN")}</p>}
 
         {/* No quantity stepper on the listing by design: quantities are edited in the bag.

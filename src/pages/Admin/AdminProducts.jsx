@@ -5,6 +5,7 @@ import {
   getAdminProducts, getCategories, removeProduct, setProductActive, updateProduct, uploadProductImage,
 } from "../../services/api";
 import "./AdminProducts.css";
+import useConfirmAction from "../../hooks/useConfirmAction";
 
 const newVariant = () => ({ clientId: crypto.randomUUID(), sku: "", variantName: "", color: "", lensColor: "", price: "", quantityAvailable: "0", lowStockThreshold: "5", files: [], imageDescription: "" });
 const emptyProduct = () => ({ productName: "", productDescription: "", brand: "Shades World", basePrice: "", categoryIds: [], attributes: { frame_material: "", frame_shape: "", uv_protection: "UV400", polarization: "" } });
@@ -12,6 +13,7 @@ const storefrontCategoryNames = ["Men", "Women", "Unisex", "Accessory"];
 
 export default function AdminProducts() {
   const { accessToken } = useAuth();
+  const confirmAction = useConfirmAction();
   const [products, setProducts] = useState([]); const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true); const [query, setQuery] = useState(""); const [status, setStatus] = useState("all"); const [category, setCategory] = useState("all");
   const [formOpen, setFormOpen] = useState(false); const [editing, setEditing] = useState(null); const [form, setForm] = useState(emptyProduct()); const [draftVariants, setDraftVariants] = useState([newVariant()]);
@@ -52,16 +54,35 @@ export default function AdminProducts() {
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
-  const toggleActive = async (product) => { const active = !product.isActive; if (!window.confirm(`${active ? "Activate" : "Deactivate"} ${product.productName}?`)) return; try { const updated = await setProductActive(accessToken, product.productId, active); setProducts((current) => current.map((p) => p.productId === updated.productId ? updated : p)); } catch (e) { setError(e.message); } };
-  const remove = async (product) => { if (!window.confirm(`Permanently remove ${product.productName}? This cannot be undone.`)) return; try { await removeProduct(accessToken, product.productId); setProducts((current) => current.filter((p) => p.productId !== product.productId)); } catch (e) { setError(e.message); } };
+  const toggleActive = (product) => { const active = !product.isActive; return confirmAction.ask({
+    title: `${active ? "Activate" : "Deactivate"} this product?`,
+    body: <p><strong>{product.productName}</strong> will {active ? "become visible in the storefront" : "be hidden from the storefront. Existing orders are unaffected"}.</p>,
+    confirmLabel: active ? "Activate" : "Deactivate",
+    busyLabel: "Saving…",
+    run: async () => { const updated = await setProductActive(accessToken, product.productId, active); setProducts((current) => current.map((p) => p.productId === updated.productId ? updated : p)); },
+  }); };
+  const remove = (product) => confirmAction.ask({
+    title: "Permanently remove this product?",
+    body: <p><strong>{product.productName}</strong> will be removed permanently. This cannot be undone.</p>,
+    confirmLabel: "Remove permanently",
+    busyLabel: "Removing…",
+    run: async () => { await removeProduct(accessToken, product.productId); setProducts((current) => current.filter((p) => p.productId !== product.productId)); },
+  });
   const syncSelected = (updated) => { setSelected(updated); setProducts((current) => current.map((p) => p.productId === updated.productId ? updated : p)); };
   const addVariant = async (event) => { event.preventDefault(); setSaving(true); try { const created = await addProductVariant(accessToken, selected.productId, variantPayload(variant)); if (variant.files.length) await uploadFiles(selected.productId, variant.files, variant.imageDescription || `${selected.productName} ${variant.color || variant.variantName}`, created.variantId); await load(); setSelected(null); setVariant(newVariant()); setNotice("Variant and photos added."); } catch (e) { setError(e.message); } finally { setSaving(false); } };
-  const removeVariant = async (item) => { if (!window.confirm(`Delete variant ${item.sku}?`)) return; try { await deleteProductVariant(accessToken, selected.productId, item.variantId); syncSelected({ ...selected, variants: selected.variants.filter((v) => v.variantId !== item.variantId), images: selected.images.filter((i) => i.variantId !== item.variantId) }); } catch (e) { setError(e.message); } };
+  const removeVariant = (item) => confirmAction.ask({
+    title: "Delete this variant?",
+    body: <p>Variant <strong>{item.sku}</strong> and its photos will be deleted from this product.</p>,
+    confirmLabel: "Delete variant",
+    busyLabel: "Deleting…",
+    run: async () => { await deleteProductVariant(accessToken, selected.productId, item.variantId); syncSelected({ ...selected, variants: selected.variants.filter((v) => v.variantId !== item.variantId), images: selected.images.filter((i) => i.variantId !== item.variantId) }); },
+  });
   const changeStock = async (item) => { const amount = Number(stockInputs[item.variantId] || 0); if (!amount) return; try { await adjustInventory(accessToken, item.variantId, String(amount), "ADJUSTMENT", "Admin product adjustment"); const variants = selected.variants.map((v) => v.variantId === item.variantId ? { ...v, quantityAvailable: v.quantityAvailable + amount } : v); syncSelected({ ...selected, variants }); setStockInputs((c) => ({ ...c, [item.variantId]: "" })); } catch (e) { setError(e.message); } };
   const addImages = async (event) => { event.preventDefault(); setSaving(true); try { await uploadFiles(selected.productId, upload.files, upload.altText || `${selected.productName} image`, upload.variantId ? Number(upload.variantId) : null, upload.isPrimary); await load(); setSelected(null); setUpload({ files: [], altText: "", variantId: "", isPrimary: false }); setNotice("Photos uploaded."); } catch (e) { setError(e.message); } finally { setSaving(false); } };
   const removeImage = async (item) => { try { await deleteProductImage(accessToken, selected.productId, item.imageId); syncSelected({ ...selected, images: selected.images.filter((i) => i.imageId !== item.imageId) }); } catch (e) { setError(e.message); } };
 
   return <section className="products-admin">
+    {confirmAction.dialog}
     {error && <div className="admin-alert error">{error}</div>}{notice && <div className="admin-alert success">{notice}</div>}
     <div className="products-toolbar"><p>Create products with colors, stock and locally stored photography.</p><button onClick={openCreate}>+ Add product</button></div>
     <div className="product-admin-stats"><article><span>Displayed products</span><strong>{filtered.length}</strong></article><article><span>Active</span><strong>{filtered.filter((p) => p.isActive).length}</strong></article><article><span>Low stock</span><strong>{filtered.filter(lowStock).length}</strong></article><article><span>Displayed units</span><strong>{filtered.reduce((sum, p) => sum + totalStock(p), 0)}</strong></article></div>

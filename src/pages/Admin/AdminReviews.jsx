@@ -3,6 +3,7 @@ import { useAuth } from "../../context/AuthContext";
 import { getAdminReviews, moderateReview } from "../../services/api";
 import "./AdminReviews.css";
 import "./ReviewModerationPagination.css";
+import useConfirmAction from "../../hooks/useConfirmAction";
 
 const label = (value) => String(value || "").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 const variant = (review) => review.variantName || review.variantSku || "Original variant";
@@ -11,6 +12,7 @@ const Stars = ({ value }) => <span className="moderation-stars" aria-label={`${v
 
 export default function AdminReviews() {
   const { accessToken } = useAuth();
+  const confirmAction = useConfirmAction();
   const [reviews, setReviews] = useState([]);
   const [status, setStatus] = useState("PENDING");
   const [query, setQuery] = useState("");
@@ -33,9 +35,18 @@ export default function AdminReviews() {
   }, [accessToken, page, search, status]);
   useEffect(() => { load(); }, [load]);
 
-  const moderate = async (review, nextStatus) => {
+  const moderate = (review, nextStatus) => {
     const verb = nextStatus === "APPROVED" ? "approve" : "reject";
-    if (!window.confirm(`${label(verb)} review #${review.reviewId} from ${review.customerName}?`)) return;
+    return confirmAction.ask({
+      title: `${label(verb)} this review?`,
+      body: <p>Review #{review.reviewId} from <strong>{review.customerName}</strong> will be {nextStatus === "APPROVED" ? "published to the storefront" : "taken down from the storefront"}.</p>,
+      confirmLabel: label(verb),
+      busyLabel: "Saving…",
+      run: () => applyModeration(review, nextStatus),
+    });
+  };
+
+  const applyModeration = async (review, nextStatus) => {
     setSavingId(review.reviewId); setError(""); setNotice("");
     try {
       const updated = await moderateReview(accessToken, review.reviewId, nextStatus);
@@ -55,6 +66,7 @@ export default function AdminReviews() {
   const submitSearch = (event) => { event.preventDefault(); setPage(0); setSearch(query); };
 
   return <section className="review-moderation">
+    {confirmAction.dialog}
     {error && <div className="admin-alert error" role="alert">{error}</div>}
     {notice && <div className="admin-alert success" role="status">{notice}</div>}
     <header className="moderation-intro"><div><span>Trust & quality</span><h2>Review moderation</h2><p>Approve useful verified-purchase feedback and keep rejected content off the storefront.</p></div><button onClick={load} disabled={loading}>Refresh</button></header>

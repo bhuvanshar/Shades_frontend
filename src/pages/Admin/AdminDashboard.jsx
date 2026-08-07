@@ -11,6 +11,7 @@ import AdminOverview from "./AdminOverview";
 import Notifications from "../Notifications/Notifications";
 import AdminReviews from "./AdminReviews";
 import "./AdminDashboard.css";
+import useConfirmAction from "../../hooks/useConfirmAction";
 
 const toLocalInput = (date) => {
   const pad = (value) => String(value).padStart(2, "0");
@@ -39,6 +40,7 @@ const offerState = (coupon) => {
 
 const AdminDashboard = () => {
   const { user, accessToken, signOut } = useAuth();
+  const confirmAction = useConfirmAction();
   const [section, setSection] = useState("overview");
   const [coupons, setCoupons] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -108,17 +110,22 @@ const AdminDashboard = () => {
     }
   };
 
-  const toggleActive = async (coupon) => {
+  const toggleActive = (coupon) => {
     const active = !coupon.isActive;
-    if (!window.confirm(`${active ? "Activate" : "Deactivate"} ${coupon.couponCode}?`)) return;
-    setError("");
-    try {
-      const updated = await setCouponActive(accessToken, coupon.couponId, active);
-      setCoupons((current) => current.map((item) => item.couponId === coupon.couponId ? updated : item));
-      setNotice(`${coupon.couponCode} has been ${active ? "activated" : "deactivated"}.`);
-    } catch (err) {
-      setError(err.message);
-    }
+    // The dialog owns the busy guard and surfaces failures in place, so the old try/catch that
+    // wrote to the page-level error banner is gone with the window.confirm it belonged to.
+    return confirmAction.ask({
+      title: `${active ? "Activate" : "Deactivate"} this offer?`,
+      body: <p>Coupon <strong>{coupon.couponCode}</strong> will {active ? "become usable at checkout" : "stop being accepted at checkout"}.</p>,
+      confirmLabel: active ? "Activate" : "Deactivate",
+      busyLabel: "Saving…",
+      run: async () => {
+        setError("");
+        const updated = await setCouponActive(accessToken, coupon.couponId, active);
+        setCoupons((current) => current.map((item) => item.couponId === coupon.couponId ? updated : item));
+        setNotice(`${coupon.couponCode} has been ${active ? "activated" : "deactivated"}.`);
+      },
+    });
   };
 
   const editOffer = (coupon) => {
@@ -150,6 +157,7 @@ const AdminDashboard = () => {
         <button className="admin-signout" onClick={signOut}>Sign out</button>
       </aside>
 
+      {confirmAction.dialog}
       <main className="admin-main">
         <header className="admin-header"><div><span>Store administration</span><h1>{section === "offers" ? "Offers & coupons" : section === "products" ? "Product catalog" : section === "orders" ? "Order operations" : section === "returns" ? "Returns & refunds" : section === "inventory" ? "Stock operations" : section === "customers" ? "Customer management" : section === "reviews" ? "Review moderation" : section === "notifications" ? "Notification centre" : section === "email-outbox" ? "Email operations" : `Good day, ${user?.name?.split(" ")[0]}.`}</h1></div><div className="admin-avatar">{user?.name?.charAt(0)?.toUpperCase()}</div></header>
         {error && <div className="admin-alert error" role="alert">{error}</div>}

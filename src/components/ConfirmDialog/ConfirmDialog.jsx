@@ -30,7 +30,13 @@ export default function ConfirmDialog({
 
   useEffect(() => {
     if (!open) return undefined;
-    restoreFocusRef.current = document.activeElement;
+    // Only ever capture something OUTSIDE the dialog. React 18's StrictMode runs this effect
+    // mount → cleanup → mount in development, so a bare capture ran a second time after the line
+    // below had already moved focus to the cancel button — storing that button as the thing to
+    // restore. It is unmounted by the time the dialog closes, so document.contains() rejects it
+    // and focus silently fell to <body> instead of returning to whatever opened the dialog.
+    const active = document.activeElement;
+    if (!dialogRef.current || !dialogRef.current.contains(active)) restoreFocusRef.current = active;
     // Focus the non-destructive action: opening a dialog should never leave the destructive
     // button one stray Enter away.
     cancelRef.current?.focus();
@@ -39,7 +45,15 @@ export default function ConfirmDialog({
     return () => {
       document.body.style.overflow = previousOverflow;
       const restore = restoreFocusRef.current;
-      if (restore && typeof restore.focus === "function" && document.contains(restore)) restore.focus();
+      if (!restore || typeof restore.focus !== "function") return;
+      // Deferred by a task. Closing via a button INSIDE the dialog means the focused element is
+      // about to be removed from the document, and the browser resets focus to <body> as part of
+      // that removal — which happened after a synchronous restore here and silently undid it.
+      // Escape and backdrop clicks did not hit this, because focus was not being destroyed by the
+      // same commit, which is why only the Close button appeared to lose focus restoration.
+      setTimeout(() => {
+        if (document.contains(restore)) restore.focus();
+      }, 0);
     };
   }, [open]);
 
@@ -79,9 +93,15 @@ export default function ConfirmDialog({
           <button type="button" ref={cancelRef} className="confirm-dialog-cancel" disabled={busy} onClick={onCancel}>
             {cancelLabel}
           </button>
-          <button type="button" className="confirm-dialog-confirm" disabled={busy} onClick={onConfirm}>
-            {busy ? busyLabel || "Working…" : confirmLabel}
-          </button>
+          {/* Omitted when no onConfirm is supplied, so this same dialog can host a purely
+              informational panel — the Contact Customer Care sheet has two external links and a
+              Close, and no "confirm" to make. Every destructive call site passes onConfirm and is
+              unaffected. */}
+          {onConfirm && (
+            <button type="button" className="confirm-dialog-confirm" disabled={busy} onClick={onConfirm}>
+              {busy ? busyLabel || "Working…" : confirmLabel}
+            </button>
+          )}
         </footer>
       </div>
     </div>
