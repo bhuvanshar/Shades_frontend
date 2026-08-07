@@ -4,16 +4,33 @@ const { createCustomer, promoteToAdmin, sql, sqlValue } = require("./api");
 
 let adminPromise = null;
 
-/** One admin for the whole run. Registration is rate-limited per IP, so this is cached. */
+/**
+ * One admin for the whole run. Registration is rate-limited per IP, so this is cached.
+ *
+ * A *rejected* promise is deliberately not kept. Creating this account is the most rate-limit-prone
+ * thing the harness does — it spends a register, a verify-email and two logins — so it fails
+ * transiently, and a cached rejection would then fail every remaining test in the run with the
+ * first failure's message, burying whatever they were each meant to prove. Clearing the slot lets
+ * the next caller make a real attempt.
+ */
 const admin = () => {
   if (!adminPromise) {
-    adminPromise = (async () => {
+    const attempt = (async () => {
       const account = await createCustomer("admin");
       promoteToAdmin(account.userId);
-      // The session must be re-established for the new role to appear in the principal.
-      await account.client.post("/auth/login", { email: account.email, password: account.password });
+      // The session must be re-established for the new role to appear in the principal. This is
+      // the second login for this account inside one minute, so it goes through the backoff: a
+      // bare post() here is exactly the call that used to poison the cache.
+      await account.client.requestWithRateLimitBackoff(
+        "POST", "/auth/login", { email: account.email, password: account.password }
+      );
       return account;
     })();
+    // Attached before the slot is published so the rejection is always handled here — otherwise a
+    // failure at a moment when nothing is awaiting surfaces as an unhandled rejection instead.
+    // The identity check keeps a late rejection from clearing a newer, healthy attempt.
+    attempt.catch(() => { if (adminPromise === attempt) adminPromise = null; });
+    adminPromise = attempt;
   }
   return adminPromise;
 };

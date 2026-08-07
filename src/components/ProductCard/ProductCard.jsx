@@ -1,7 +1,7 @@
 import React, { useContext } from "react";
 import "./ProductCard.css";
 import { Link, useNavigate } from "react-router-dom";
-import { StoreContext } from "../../context/StoreContext";
+import { StoreContext, listingPrice } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 
 const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, isNew, variantId, stock, available = true }) => {
@@ -14,7 +14,8 @@ const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, i
   const save = async () => { if (!user) return navigate("/signin"); try { await toggleWishlist(id); } catch (error) { window.alert(error.message); } };
   // The card commits exactly one colourway, so it quotes that variant's own price and caps
   // at that variant's own stock; the product-level minimum only appears as a "from" hint.
-  const unitPrice = variantPrice == null || !Number.isFinite(Number(variantPrice)) ? Number(price) : Number(variantPrice);
+  // The rule lives in StoreContext because ProductGrid's sort has to order by this exact number.
+  const unitPrice = listingPrice(variantPrice, price);
   const cap = stock == null || !Number.isFinite(Number(stock)) ? null : Number(stock);
   const inStock = available && cap !== 0;
   const atCap = cap !== null && count >= cap;

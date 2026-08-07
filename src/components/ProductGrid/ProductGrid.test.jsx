@@ -39,3 +39,30 @@ test("the listing card names the colourway its button will add", () => {
   view();
   expect(screen.getByRole("button", { name: "Add Barcelona Ocean in Blue to bag" })).toBeInTheDocument();
 });
+
+// A product's `price` is its lowest ACTIVE variant, which may be a colourway that is out of stock
+// and therefore not the one the card commits or quotes. Sorting on it produced a "Price: low to
+// high" grid whose printed prices descended. Girona is the case: cheapest colourway ₹900 sold out,
+// so the card quotes ₹2,400 and must sort above the ₹1,500 product.
+const mixedStock = [
+  { ...products[0], _id: "3", productId: 3, name: "Girona Amber", price: 900, defaultVariantPrice: 2400, priceFrom: 900 },
+  { ...products[0], _id: "4", productId: 4, name: "Sitges Slate", price: 1500, defaultVariantPrice: 1500, priceFrom: null },
+];
+const viewMixed = (url) => render(
+  <MemoryRouter initialEntries={[url]}>
+    <StoreContext.Provider value={{ ...store, product_list: mixedStock }}><ProductGrid category="All" /></StoreContext.Provider>
+  </MemoryRouter>
+);
+const printed = (container, selector) => [...container.querySelectorAll(selector)].map((node) => node.textContent);
+
+test("sorts by the price each card prints, not by an out-of-stock minimum", () => {
+  const { container } = viewMixed("/?sort=price-low");
+  expect(printed(container, ".product-name")).toEqual(["Sitges Slate", "Girona Amber"]);
+  expect(printed(container, ".product-price")).toEqual(["₹1,500", "₹2,400"]);
+});
+
+test("reverses that same order for high to low", () => {
+  const { container } = viewMixed("/?sort=price-high");
+  expect(printed(container, ".product-name")).toEqual(["Girona Amber", "Sitges Slate"]);
+  expect(printed(container, ".product-price")).toEqual(["₹2,400", "₹1,500"]);
+});

@@ -1,5 +1,6 @@
 const { test, expect } = require("@playwright/test");
 const { createProduct } = require("./support/fixtures");
+const { WIDTHS, overflowReport, overflows } = require("./support/layout");
 
 // A pagination control once pushed the home page into horizontal scroll at 375px, and it was
 // caught only because one unrelated test happened to assert scrollWidth <= innerWidth. This spec
@@ -8,40 +9,9 @@ const { createProduct } = require("./support/fixtures");
 // Horizontal scroll on a phone is a real defect — content sits off-screen with no affordance to
 // reach it — and it appears when data grows (more pages, longer names), which is exactly when
 // nobody is looking.
-
-const WIDTHS = [
-  { name: "small phone", width: 320, height: 720 },
-  { name: "phone", width: 375, height: 812 },
-  { name: "large phone", width: 414, height: 896 },
-  { name: "tablet", width: 768, height: 1024 },
-];
-
-/** The elements actually sticking out, so a failure names the culprit instead of just the page. */
-const overflowReport = (page) => page.evaluate(() => {
-  const limit = document.documentElement.clientWidth;
-  const offenders = [];
-  for (const node of document.querySelectorAll("body *")) {
-    const rect = node.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) continue;
-    const style = getComputedStyle(node);
-    if (style.position === "fixed" || style.visibility === "hidden" || style.display === "none") continue;
-    if (rect.right > limit + 1 || rect.left < -1) {
-      offenders.push({
-        tag: node.tagName.toLowerCase(),
-        className: String(node.className || "").slice(0, 60),
-        left: Math.round(rect.left),
-        right: Math.round(rect.right),
-      });
-    }
-  }
-  return {
-    limit,
-    scrollWidth: document.documentElement.scrollWidth,
-    bodyScrollWidth: document.body.scrollWidth,
-    // Innermost offenders are the useful ones; a parent overflows because a child does.
-    offenders: offenders.slice(-6),
-  };
-});
+//
+// The probe itself is in support/layout.js so admin-responsive.spec.js measures the same thing
+// this does, rather than a copy of it that drifts.
 
 let product;
 
@@ -81,7 +51,7 @@ for (const size of WIDTHS) {
       // Let the catalogue land so data-driven widths (pagination, tiles) are actually rendered.
       await page.waitForLoadState("networkidle");
       const report = await overflowReport(page);
-      if (report.scrollWidth > report.limit + 1 || report.offenders.length > 0) {
+      if (overflows(report)) {
         failures.push(`${route.name} (${route.path}): scrollWidth ${report.scrollWidth} > ${report.limit}; `
           + `offenders ${JSON.stringify(report.offenders)}`);
       }

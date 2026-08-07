@@ -1,11 +1,15 @@
 import React, { useContext, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import "./ProductGrid.css";
-import { StoreContext } from "../../context/StoreContext";
+import { StoreContext, listingPrice } from "../../context/StoreContext";
 import ProductCard from "../ProductCard/ProductCard";
 
 const text = (value) => String(value || "").trim().toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+// Sorting orders the numbers on screen, so it must use the price each card prints \u2014 not `price`,
+// which is the product-level minimum and belongs to a colourway the card may not be selling. The
+// two diverge the moment the cheapest variant goes out of stock.
+const cardPrice = (item) => listingPrice(item.defaultVariantPrice, item.price);
 const SORTS = new Set(["featured", "newest", "price-low", "price-high", "name"]);
 const PAGE_SIZE = 12;
 
@@ -57,8 +61,8 @@ const ProductGrid = ({ category }) => {
         && (availability !== "in-stock" || item.available)
         && (low === null || item.price >= low) && (high === null || item.price <= high);
     }).sort((a, b) => {
-      if (sort === "price-low") return a.price - b.price;
-      if (sort === "price-high") return b.price - a.price;
+      if (sort === "price-low") return cardPrice(a) - cardPrice(b);
+      if (sort === "price-high") return cardPrice(b) - cardPrice(a);
       if (sort === "name") return a.name.localeCompare(b.name);
       if (sort === "newest") return Number(b.isNew) - Number(a.isNew) || Number(b.productId) - Number(a.productId);
       return Number(b.available) - Number(a.available) || Number(b.productId) - Number(a.productId);

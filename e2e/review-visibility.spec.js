@@ -2,7 +2,7 @@ const { test, expect } = require("@playwright/test");
 const { admin, createProduct, markDelivered } = require("./support/fixtures");
 const { buyAndDeliver } = require("./support/shop");
 const { createCustomer, sqlValue } = require("./support/api");
-const { fillCheckoutAddress, signInAsNewCustomer } = require("./support/ui");
+const { fillCheckoutAddress, signInAsNewCustomer, submitSignIn } = require("./support/ui");
 
 // Issue 1: a review from an eligible customer is published immediately — no admin approval.
 // Real frontend, real backend, real MySQL.
@@ -70,11 +70,7 @@ test("the count and average update as reviews are added", async ({ page, browser
   // /signin would redirect away before the form could be filled.
   const otherContext = await browser.newContext();
   const other = await otherContext.newPage();
-  await other.goto("/signin");
-  await other.getByPlaceholder("you@example.com").fill(second.email);
-  await other.getByPlaceholder("Enter your password").first().fill(second.password);
-  await other.locator(".signin-submit").click();
-  await expect(other.locator(".nav-user")).toBeVisible({ timeout: 20_000 });
+  await submitSignIn(other, second);
   await buyAndDeliver(other, { productId: product.productId, colour: "Slate" });
   const [itemTwo] = await second.client.get(`/reviews/products/${product.productId}/reviewable-variants`);
   await second.client.post("/reviews", { productId: product.productId, orderItemId: itemTwo.orderItemId, rating: 3, reviewText: "Three." });

@@ -10,6 +10,14 @@ const storefrontCategories = ["All", "Men", "Women", "Unisex", "Accessory"];
 // card and the button that commits the variant can never name a different colourway
 // than the one being added.
 export const variantLabel = (variant) => variant?.attributes?.color || variant?.variantName || variant?.sku || "";
+// The one rule for the number a listing card quotes: the committed variant's own price, with the
+// product-level minimum only as a fallback when no variant resolves. Discovery sorts through this
+// too, because sorting on `price` while the card printed `defaultVariantPrice` produced a
+// "Price: low to high" grid that was visibly not — any product whose cheapest colourway is out of
+// stock quotes a higher number than the one it was ordered by.
+export const listingPrice = (variantPrice, productPrice) => (
+  variantPrice == null || !Number.isFinite(Number(variantPrice)) ? Number(productPrice) : Number(variantPrice)
+);
 // null means "unknown", which is never the same thing as zero or as unlimited.
 const finiteOrNull = (value) => (value !== null && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null);
 
@@ -30,9 +38,11 @@ const mapProduct = (product) => {
     name: product.productName,
     brand: product.brand,
     description: product.productDescription || "",
-    // price stays the lowest ACTIVE variant price because discovery sorts and the price
-    // filter compare whole products. It may belong to an out-of-stock variant, so it is
-    // not what any add button commits: the card must quote defaultVariantPrice instead.
+    // price stays the lowest ACTIVE variant price because the price *filter* asks a product-level
+    // question — "does this product have anything in my range" — which the card's "Other colours
+    // from ₹x" note explains on screen. Sorting is not that question and no longer uses this:
+    // see listingPrice. It may belong to an out-of-stock variant, so it is not what any add
+    // button commits either: the card must quote defaultVariantPrice instead.
     price: lowestPrice,
     image: primaryImage?.imageUrl || "",
     imageAlt: primaryImage?.altText || product.productName,

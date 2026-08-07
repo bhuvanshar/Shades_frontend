@@ -1,6 +1,6 @@
 const { test, expect } = require("@playwright/test");
 const { createProduct } = require("./support/fixtures");
-const { signInAsNewCustomer } = require("./support/ui");
+const { signInAsNewCustomer, submitSignIn } = require("./support/ui");
 
 let product;
 
@@ -74,11 +74,11 @@ test("a guest bag merges into the account on sign-in and survives refresh, logou
   await page.locator(".nav-account", { hasText: /sign out/i }).click();
   await expect(page.locator(".cart-badge")).toHaveCount(0);
 
-  await page.goto("/signin");
-  await page.getByPlaceholder("you@example.com").fill(account.email);
-  await page.getByPlaceholder("Enter your password").first().fill(account.password);
-  await page.locator(".signin-submit").click();
-  await expect(page.locator(".nav-user")).toBeVisible({ timeout: 20_000 });
+  // Through the helper, not inlined. This is the account's SECOND sign-in, so it does not come
+  // from signInAsNewCustomer and quietly kept its own copy of the form steps — without the
+  // rate-limit backoff. Under a full suite it is the login that tips past 20/IP/min, and the
+  // failure looks like "the bag did not come back" rather than "the login was throttled".
+  await submitSignIn(page, account);
   // The bag comes back from the server, still 2.
   await expect(page.locator(".cart-badge")).toHaveText("2", { timeout: 20_000 });
 });

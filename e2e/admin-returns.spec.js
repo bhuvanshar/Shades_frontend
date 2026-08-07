@@ -1,7 +1,7 @@
 const { test, expect } = require("@playwright/test");
 const { admin, createProduct, markDelivered } = require("./support/fixtures");
-const { createCustomer, promoteToAdmin, sqlValue } = require("./support/api");
-const { fillCheckoutAddress, signInAsNewCustomer } = require("./support/ui");
+const { sqlValue } = require("./support/api");
+const { fillCheckoutAddress, signInAsNewAdmin, signInAsNewCustomer } = require("./support/ui");
 const { buyAndDeliver } = require("./support/shop");
 
 // Issue 3: the Disapprove button in Admin Returns & Refunds.
@@ -44,13 +44,9 @@ const createReturnRequest = async (page, label) => {
 const openAsAdmin = async (browser, returnId) => {
   const context = await browser.newContext();
   const page = await context.newPage();
-  const account = await createCustomer(`ret-admin-${returnId}`);
-  promoteToAdmin(account.userId);
-  await page.goto("/signin");
-  await page.getByPlaceholder("you@example.com").fill(account.email);
-  await page.getByPlaceholder("Enter your password").first().fill(account.password);
-  await page.locator(".signin-submit").click();
-  await expect(page).toHaveURL(/\/admin/, { timeout: 30_000 });
+  // signInAsNewAdmin is register + promote + sign-in, which is exactly what was inlined here —
+  // minus the rate-limit backoff, which is the only reason the helper exists.
+  await signInAsNewAdmin(page, `ret-admin-${returnId}`);
   await page.locator(".admin-sidebar nav button", { hasText: "Returns & refunds" }).click();
   await page.locator(".returns-list > button", { hasText: `Return #${returnId}` }).click();
   await expect(page.locator(".return-drawer")).toBeVisible();
