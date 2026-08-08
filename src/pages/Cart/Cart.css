@@ -316,3 +316,62 @@
 .cart-checkout-btn:disabled:hover {
   opacity: 0.55;
 }
+
+/* ── Automatic quantity offer ──────────────────────────────────────────────────────────────── */
+/* The offer's own block in the bag summary: name, non-negotiable terms, the group arithmetic and
+   the nudge toward the next group. Kept inside the summary card so the explanation sits next to the
+   money it explains rather than somewhere the customer has to go looking for it. */
+.cart-offer {
+  border: 1px solid var(--border-soft, #e5e1da);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  background: var(--bg-sand, #faf8f5);
+}
+
+.cart-offer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cart-offer-head strong { font-size: 14px; }
+
+.cart-offer-badge {
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  background: #1c1c1c;
+  color: #fff;
+  border-radius: 999px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.cart-offer-terms,
+.cart-offer-calc,
+.cart-offer-progress {
+  font-size: 12px;
+  margin: 6px 0 0;
+  color: var(--text-muted, #6b6b66);
+}
+
+.cart-offer-calc { font-weight: 600; color: var(--text-dark, #1c1c1c); }
+.cart-offer-progress { color: var(--text-dark, #1c1c1c); }
+
+.cart-offer-suppressed,
+.cart-quote-note {
+  font-size: 11px;
+  margin: 8px 0 0;
+  color: var(--text-muted, #6b6b66);
+}
+
+.cart-item-eligibility {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.cart-item-eligibility.eligible { color: #1f7a4d; }
+.cart-item-eligibility.not-eligible { color: var(--text-muted, #6b6b66); }

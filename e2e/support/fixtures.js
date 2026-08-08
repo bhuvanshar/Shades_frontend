@@ -101,4 +101,102 @@ const markDelivered = async (orderId) => {
   return orderStatus(orderId);
 };
 
-module.exports = { admin, createProduct, markDelivered, movementsForOrder, orderStatus, stockOf };
+// ── Automatic quantity offer ─────────────────────────────────────────────────────────────────
+//
+// Created through the real admin API so the same validation, sanitisation and single-active-offer
+// rule a real administrator hits is exercised here. The database allows only one active offer, so
+// every spec that needs one calls withAutomaticOffer, which clears any leftover first — otherwise
+// the second spec in a run would fail with a 409 about the first spec's offer rather than with
+// whatever it was actually testing.
+
+const isoLocal = (date) => {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+/** Deactivates and archives every live offer, so the next activation cannot collide. */
+const clearAutomaticOffers = () => {
+  sql("UPDATE AUTOMATIC_OFFERS SET IS_ACTIVE = 0, ARCHIVED_AT = UTC_TIMESTAMP() WHERE ARCHIVED_AT IS NULL");
+};
+
+/**
+ * Creates (and by default activates) an automatic offer.
+ *
+ * @param requiredQuantity group size, at least 2
+ * @param discountPerGroup amount off per complete group
+ * @param offsetMinutes    {start, end} relative to now, for scheduled and expired cases. An expired
+ *                         offer has to be created active-and-in-window then moved, because the API
+ *                         validates end > start — the SQL nudge below is how a spec reaches a state
+ *                         that only the passage of time would otherwise produce.
+ */
+const createAutomaticOffer = async ({
+  offerName, bannerMessage = null, requiredQuantity = 2, discountPerGroup = 500,
+  minimumOrderSubtotal = 0, scopeType = "ALL_PRODUCTS", productIds = [], categoryIds = [],
+  active = true, startMinutes = -60, endMinutes = 60 * 24 * 30,
+} = {}) => {
+  const account = await admin();
+  const now = Date.now();
+  const created = await account.client.post("/offers/automatic/admin", {
+    offerName, bannerMessage, requiredQuantity, discountPerGroup, minimumOrderSubtotal,
+    scopeType, productIds, categoryIds,
+    startsAt: isoLocal(new Date(now + startMinutes * 60_000)),
+    endsAt: isoLocal(new Date(now + endMinutes * 60_000)),
+    isActive: active,
+    priority: 0,
+  });
+  return created;
+};
+
+/** Clears whatever was live, then creates the offer this spec wants. */
+const withAutomaticOffer = async (options = {}) => {
+  clearAutomaticOffers();
+  return createAutomaticOffer(options);
+};
+
+const automaticOfferRow = (offerId) =>
+  sql(`SELECT CONCAT(IS_ACTIVE,'|',VERSION,'|',IFNULL(ARCHIVED_AT,'-')) FROM AUTOMATIC_OFFERS
+       WHERE AUTOMATIC_OFFER_ID=${Number(offerId)}`).trim();
+
+/** The order's frozen offer snapshot, straight from the database. */
+const offerSnapshotOf = (orderId) => {
+  const row = sql(`SELECT CONCAT_WS('|', IFNULL(AUTO_OFFER_ID,'-'), IFNULL(AUTO_OFFER_NAME,'-'),
+      IFNULL(AUTO_OFFER_REQUIRED_QUANTITY,'-'), IFNULL(AUTO_OFFER_DISCOUNT_PER_GROUP,'-'),
+      IFNULL(AUTO_OFFER_ELIGIBLE_QUANTITY,'-'), IFNULL(AUTO_OFFER_GROUPS,'-'),
+      IFNULL(AUTO_OFFER_DISCOUNT,'-'), DISCOUNT_AMOUNT, SUBTOTAL_AMOUNT, TOTAL_AMOUNT)
+      FROM ORDERS WHERE ORDER_ID=${Number(orderId)}`).trim();
+  const [offerId, offerName, requiredQuantity, discountPerGroup, eligibleQuantity, groups,
+    offerDiscount, discountAmount, subtotal, total] = row.split("|");
+  return {
+    offerId: offerId === "-" ? null : Number(offerId),
+    offerName: offerName === "-" ? null : offerName,
+    requiredQuantity: requiredQuantity === "-" ? null : Number(requiredQuantity),
+    discountPerGroup: discountPerGroup === "-" ? null : Number(discountPerGroup),
+    eligibleQuantity: eligibleQuantity === "-" ? null : Number(eligibleQuantity),
+    groups: groups === "-" ? null : Number(groups),
+    offerDiscount: offerDiscount === "-" ? null : Number(offerDiscount),
+    discountAmount: Number(discountAmount),
+    subtotal: Number(subtotal),
+    total: Number(total),
+  };
+};
+
+/** Per-line discount allocation as stored, keyed by order item id. */
+const lineDiscountsOf = (orderId) =>
+  sql(`SELECT CONCAT(ORDER_ITEM_ID,'|',VARIANT_ID,'|',QUANTITY,'|',LINE_TOTAL,'|',DISCOUNT_AMOUNT)
+       FROM ORDER_ITEMS WHERE ORDER_ID=${Number(orderId)} ORDER BY ORDER_ITEM_ID`)
+    .split("\n").map((row) => row.trim()).filter(Boolean)
+    .map((row) => {
+      const [orderItemId, variantId, quantity, lineTotal, discountAmount] = row.split("|");
+      return {
+        orderItemId: Number(orderItemId), variantId: Number(variantId),
+        quantity: Number(quantity), lineTotal: Number(lineTotal),
+        discountAmount: Number(discountAmount),
+      };
+    });
+
+module.exports = {
+  admin, createProduct, markDelivered, movementsForOrder, orderStatus, stockOf,
+  automaticOfferRow, clearAutomaticOffers, createAutomaticOffer, lineDiscountsOf,
+  offerSnapshotOf, withAutomaticOffer,
+};

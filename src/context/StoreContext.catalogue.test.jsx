@@ -6,7 +6,8 @@ import * as api from "../services/api";
 const mockAuth = { accessToken: null, user: null, isAdmin: false };
 jest.mock("./AuthContext", () => ({ useAuth: () => mockAuth }));
 jest.mock("../services/api", () => ({ getStoreProducts: jest.fn(), getCart: jest.fn(), updateCartItem: jest.fn(),
-  addCartItem: jest.fn(), removeCartItem: jest.fn(), getWishlist: jest.fn(), addWishlistItem: jest.fn(), removeWishlistItem: jest.fn() }));
+  addCartItem: jest.fn(), removeCartItem: jest.fn(), getWishlist: jest.fn(), addWishlistItem: jest.fn(), removeWishlistItem: jest.fn(),
+  quoteCart: jest.fn() }));
 
 // The cheapest active variant (Blue, 2499) is out of stock, so the variant the card will
 // commit is Pink at 2999. Non-uniform prices on purpose: the seed data is uniform today.
@@ -33,6 +34,7 @@ beforeEach(() => {
   Object.assign(mockAuth, { accessToken: null, user: null, isAdmin: false });
   api.getStoreProducts.mockResolvedValue(payload);
   api.getWishlist.mockResolvedValue({ items: [] });
+  api.quoteCart.mockResolvedValue(null);
 });
 
 test("the listing fields describe the variant the card commits, not the cheapest one", async () => {

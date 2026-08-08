@@ -10,7 +10,8 @@ const rowLabel = (line) => (line.color ? `${line.product.name} in ${line.color}`
 
 const Cart = () => {
   const { cartItems, product_list, productsLoading, productsError, refreshProducts, removeFromCart,
-    removeLineFromCart, addToCart, getTotalCartAmount, appliedOffer, setAppliedOffer, cartSyncing } = useContext(StoreContext);
+    removeLineFromCart, addToCart, getTotalCartAmount, appliedOffer, setAppliedOffer, cartSyncing,
+    quote, quoteLoading } = useContext(StoreContext);
   const { accessToken } = useAuth();
   const navigate = useNavigate();
   const [promoCode, setPromoCode] = useState(appliedOffer?.couponCode || "");
@@ -24,13 +25,24 @@ const Cart = () => {
   const catalogueLoading = product_list.length === 0 && productsLoading;
   const catalogueFailed = product_list.length === 0 && !productsLoading && Boolean(productsError);
 
-  const subtotal = getTotalCartAmount();
   const itemQuantity = lines.reduce((sum, line) => sum + line.quantity, 0);
-  const discount = Math.min(subtotal, Number(appliedOffer?.calculatedDiscount || 0));
-  const taxable = Math.max(0, subtotal - discount);
-  const tax = Number((taxable * 0.18).toFixed(2));
-  const deliveryFee = subtotal === 0 || subtotal >= 500 ? 0 : 49;
-  const total = taxable + tax + deliveryFee;
+  // Every figure comes from the server's quote once it has arrived. The client-side subtotal is the
+  // fallback while it is in flight, so the bag is never blank — but no discount is shown until the
+  // server has said there is one, which is what stops a misleading number appearing before the cart
+  // is priced. `quote` also already excludes anything checkout could not fulfil.
+  const clientSubtotal = getTotalCartAmount();
+  const priced = Boolean(quote);
+  const subtotal = priced ? Number(quote.subtotal) : clientSubtotal;
+  const offerQuote = quote?.automaticOffer;
+  const discount = priced ? Number(quote.discount) : 0;
+  const tax = priced ? Number(quote.taxAmount) : Number((clientSubtotal * 0.18).toFixed(2));
+  const deliveryFee = priced ? Number(quote.shippingAmount)
+    : (clientSubtotal === 0 || clientSubtotal >= 500 ? 0 : 49);
+  const total = priced ? Number(quote.totalAmount) : clientSubtotal + tax + deliveryFee;
+  const automaticApplied = quote?.appliedPromotion === "AUTOMATIC_OFFER";
+  const eligibleVariantIds = new Set(offerQuote?.eligibleVariantIds || []);
+  const offerScoped = Boolean(offerQuote) && offerQuote.eligibleVariantIds
+    && offerQuote.eligibleVariantIds.length < lines.filter((line) => line.resolved).length;
 
   const applyPromo = async () => {
     if (!promoCode.trim()) { setPromoError("Enter an offer code."); return; }
@@ -67,6 +79,15 @@ const Cart = () => {
                 <Link to={`/product/${line.productId}`}><p className="cart-item-name">{line.product.name}</p></Link>
                 <p className="cart-item-color">{line.color}{line.variant?.sku && ` · ${line.variant.sku}`}</p>
                 <p className="cart-item-price">{money(line.price)}</p>
+                {/* Only worth saying when the offer actually excludes something. On an
+                    all-products offer every line would carry the same label, which is noise. */}
+                {offerScoped && (
+                  <p className={`cart-item-eligibility ${eligibleVariantIds.has(line.variantId) ? "eligible" : "not-eligible"}`}>
+                    {eligibleVariantIds.has(line.variantId)
+                      ? "Counts toward the offer"
+                      : "Not eligible for this offer"}
+                  </p>
+                )}
               </div>
               <div className="cart-item-qty">
                 <button aria-label={`Decrease quantity of ${rowLabel(line)}`} onClick={() => removeFromCart(line.productId, line.variantId)}>−</button>
@@ -103,12 +124,46 @@ const Cart = () => {
             </p>}
             <div className="cart-summary-row"><span>Items</span><span>{itemQuantity} units</span></div>
             <div className="cart-summary-row"><span>Subtotal</span><span>{money(subtotal)}</span></div>
-            {appliedOffer && <div className="cart-summary-row cart-discount"><span>Offer ({appliedOffer.couponCode})</span><span>−{money(discount)}</span></div>}
+            {/* The offer's own block: what it is, how many groups qualified, and what that is worth.
+                Rendered whenever an offer is in force — including when it has earned nothing yet —
+                because "you have 1 of 2" is the information that makes the offer usable. */}
+            {offerQuote && (
+              <div className="cart-offer" data-testid="cart-automatic-offer">
+                <div className="cart-offer-head">
+                  <strong>{offerQuote.offerName}</strong>
+                  {automaticApplied && <span className="cart-offer-badge">Applied automatically</span>}
+                </div>
+                <p className="cart-offer-terms">{offerQuote.termsMessage}</p>
+                {offerQuote.completeGroups > 0 && (
+                  <p className="cart-offer-calc" data-testid="cart-offer-calc">
+                    {offerQuote.completeGroups} qualifying {offerQuote.completeGroups === 1 ? "group" : "groups"} × {money(offerQuote.discountPerGroup)}
+                  </p>
+                )}
+                {offerQuote.progressMessage && (
+                  <p className="cart-offer-progress" data-testid="cart-offer-progress">{offerQuote.progressMessage}</p>
+                )}
+              </div>
+            )}
+            {automaticApplied && (
+              <div className="cart-summary-row cart-discount" data-testid="cart-offer-discount">
+                <span>{quote.appliedPromotionLabel}</span>
+                <span aria-label={`Offer discount ${money(discount)}`}>−{money(discount)}</span>
+              </div>
+            )}
+            {quote?.appliedPromotion === "COUPON" && (
+              <div className="cart-summary-row cart-discount"><span>{quote.appliedPromotionLabel}</span><span>−{money(discount)}</span></div>
+            )}
+            {/* Not silent: when two promotions qualified, the customer is told which one applied and
+                why the other did not. */}
+            {quote?.suppressedPromotionReason && (
+              <p className="cart-offer-suppressed" role="status" data-testid="cart-offer-suppressed">{quote.suppressedPromotionReason}</p>
+            )}
             <div className="cart-summary-row"><span>Estimated tax</span><span>{money(tax)}</span></div>
             <div className="cart-summary-row"><span>Shipping</span><span>{deliveryFee === 0 ? "Free" : money(deliveryFee)}</span></div>
             {deliveryFee > 0 && <p className="cart-free-ship-hint">Add {money(500 - subtotal)} more for free shipping</p>}
             <div className="cart-summary-divider" />
             <div className="cart-summary-row cart-summary-total"><span>Estimated total</span><span>{money(total)}</span></div>
+            {quoteLoading && <p className="cart-quote-note" role="status">Pricing your bag…</p>}
             <button className="cart-checkout-btn" disabled={unavailable.length > 0} onClick={() => navigate("/order")}>
               {unavailable.length > 0 ? "Remove unavailable items to continue" : "Proceed to checkout"}</button>
             <div className="cart-promo">

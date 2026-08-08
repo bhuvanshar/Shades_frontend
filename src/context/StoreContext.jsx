@@ -1,5 +1,5 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { addCartItem, addWishlistItem, getCart, getStoreProducts, getWishlist, removeCartItem, removeWishlistItem, updateCartItem } from "../services/api";
+import { addCartItem, addWishlistItem, getCart, getStoreProducts, getWishlist, quoteCart, removeCartItem, removeWishlistItem, updateCartItem } from "../services/api";
 import { useAuth } from "./AuthContext";
 import { clearGuestCart, readGuestCart, writeGuestCart } from "../services/guestCart";
 
@@ -148,6 +148,9 @@ const StoreContextProvider = ({ children }) => {
   // land after that snapshot, silently dropping the restored guest bag.
   const [cartItems, setCartItems] = useState(readGuestCart);
   const [appliedOffer, setAppliedOffer] = useState(null);
+  const [quote, setQuote] = useState(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
   const [wishlistItems, setWishlistItems] = useState([]);
   const [wishlistLoading, setWishlistLoading] = useState(false);
   const [cartError, setCartError] = useState("");
@@ -339,6 +342,52 @@ const StoreContextProvider = ({ children }) => {
   const getCartCount = () => resolveCartLines(cartItems, product_list).reduce((sum, line) => sum + line.quantity, 0);
   const getTotalCartAmount = () => resolveCartLines(cartItems, product_list).reduce((total, line) => total + (line.resolved ? line.price * line.quantity : 0), 0);
   const isWishlisted = (productId) => wishlistItems.some((item) => String(item.productId) === String(productId));
+
+  /**
+   * The server's priced view of the current bag.
+   *
+   * The bag and checkout still compute a client-side subtotal for immediate feedback while this is
+   * in flight, but every discount and the final total come from here. The browser sends variant ids
+   * and quantities; it never sends, and is never trusted for, an amount.
+   *
+   * Re-quoted whenever the bag changes and whenever the coupon field changes, which is what makes
+   * the discount disappear the moment a change makes the cart ineligible instead of at checkout.
+   */
+  const quoteSignature = JSON.stringify(
+    Object.entries(cartItems).filter(([, quantity]) => quantity > 0).sort());
+  const couponCode = appliedOffer?.couponCode || "";
+  const refreshQuote = useCallback(() => {
+    // Built from the same resolver the bag renders, so a line the catalogue cannot resolve is
+    // absent from the quote exactly as it is absent from the client-side subtotal — and the server
+    // excludes anything unpurchasable again on its own side.
+    const lines = resolveCartLines(cartItemsRef.current, productListRef.current)
+      .filter((line) => line.resolved && line.variantId && line.quantity > 0)
+      .map((line) => ({ variantId: line.variantId, quantity: line.quantity }));
+    if (lines.length === 0) { setQuote(null); setQuoteError(""); setQuoteLoading(false); return () => {}; }
+    let active = true;
+    setQuoteLoading(true);
+    quoteCart(lines, { couponCode: couponCode || undefined })
+      .then((priced) => { if (active) { setQuote(priced); setQuoteError(""); } })
+      .catch((error) => { if (active) { setQuote(null); setQuoteError(error.message); } })
+      .finally(() => { if (active) setQuoteLoading(false); });
+    return () => { active = false; };
+  }, [couponCode]);
+
+  useEffect(() => {
+    // quoteSignature rather than cartItems: the object identity changes on every render path that
+    // touches the bag, and re-quoting on identity alone loops.
+    const cancel = refreshQuote();
+    const refresh = () => refreshQuote();
+    // An administrator activating or editing an offer changes the answer without the bag changing.
+    window.addEventListener("shades:offer-changed", refresh);
+    window.addEventListener("shades:products-changed", refresh);
+    return () => {
+      cancel();
+      window.removeEventListener("shades:offer-changed", refresh);
+      window.removeEventListener("shades:products-changed", refresh);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteSignature, refreshQuote, product_list.length]);
   const toggleWishlist = async (productId) => {
     if (!accessToken) throw new Error("Please sign in to save products.");
     const wishlist = isWishlisted(productId)
@@ -348,9 +397,9 @@ const StoreContextProvider = ({ children }) => {
     return wishlist;
   };
 
-  const clearCartState = () => { replaceCartItems({}); setAppliedOffer(null); setCartError(""); };
+  const clearCartState = () => { replaceCartItems({}); setAppliedOffer(null); setCartError(""); setQuote(null); };
 
-  return <StoreContext.Provider value={{ product_list, productsLoading, productsError, refreshProducts, categories, cartItems, setCartItems:replaceCartItems, addToCart, removeFromCart, removeLineFromCart, getCartCount, getTotalCartAmount, appliedOffer, setAppliedOffer, cartError, cartSyncing: cartOperations > 0, clearCartState, wishlistItems, wishlistLoading, isWishlisted, toggleWishlist }}>{children}</StoreContext.Provider>;
+  return <StoreContext.Provider value={{ product_list, productsLoading, productsError, refreshProducts, categories, cartItems, setCartItems:replaceCartItems, addToCart, removeFromCart, removeLineFromCart, getCartCount, getTotalCartAmount, appliedOffer, setAppliedOffer, cartError, cartSyncing: cartOperations > 0, clearCartState, wishlistItems, wishlistLoading, isWishlisted, toggleWishlist, quote, quoteLoading, quoteError, refreshQuote }}>{children}</StoreContext.Provider>;
 };
 
 export default StoreContextProvider;

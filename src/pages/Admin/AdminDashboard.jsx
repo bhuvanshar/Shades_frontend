@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { createCoupon, getCoupons, setCouponActive, updateCoupon as updateCouponRequest } from "../../services/api";
+import AdminAutomaticOffer from "./AdminAutomaticOffer";
 import AdminProducts from "./AdminProducts";
 import AdminOrders from "./AdminOrders";
 import AdminInventory from "./AdminInventory";
@@ -152,6 +153,7 @@ const AdminDashboard = () => {
         <nav aria-label="Admin navigation">
           <button className={section === "overview" ? "active" : ""} onClick={() => navigateSection("overview")}>Overview</button>
           <button className={section === "offers" ? "active" : ""} onClick={goToOffers}>Offers</button>
+          <button className={section === "automatic-offer" ? "active" : ""} onClick={() => navigateSection("automatic-offer")}>Automatic Pair/Quantity Offer</button>
           <button className={section === "products" ? "active" : ""} onClick={() => { setSection("products"); setError(""); setNotice(""); }}>Products</button><button className={section === "orders" ? "active" : ""} onClick={() => { setSection("orders"); setError(""); setNotice(""); }}>Orders</button><button className={section === "returns" ? "active" : ""} onClick={() => setSection("returns")}>Returns & refunds</button><button className={section === "inventory" ? "active" : ""} onClick={() => setSection("inventory")}>Inventory</button><button className={section === "customers" ? "active" : ""} onClick={() => setSection("customers")}>Customers</button><button className={section === "reviews" ? "active" : ""} onClick={() => navigateSection("reviews")}>Review moderation</button><button className={section === "notifications" ? "active" : ""} onClick={() => navigateSection("notifications")}>Notifications</button><button className={section === "email-outbox" ? "active" : ""} onClick={() => setSection("email-outbox")}>Email outbox</button>
         </nav>
         <button className="admin-signout" onClick={signOut}>Sign out</button>
@@ -159,7 +161,7 @@ const AdminDashboard = () => {
 
       {confirmAction.dialog}
       <main className="admin-main">
-        <header className="admin-header"><div><span>Store administration</span><h1>{section === "offers" ? "Offers & coupons" : section === "products" ? "Product catalog" : section === "orders" ? "Order operations" : section === "returns" ? "Returns & refunds" : section === "inventory" ? "Stock operations" : section === "customers" ? "Customer management" : section === "reviews" ? "Review moderation" : section === "notifications" ? "Notification centre" : section === "email-outbox" ? "Email operations" : `Good day, ${user?.name?.split(" ")[0]}.`}</h1></div><div className="admin-avatar">{user?.name?.charAt(0)?.toUpperCase()}</div></header>
+        <header className="admin-header"><div><span>Store administration</span><h1>{section === "offers" ? "Offers & coupons" : section === "automatic-offer" ? "Automatic Pair/Quantity Offer" : section === "products" ? "Product catalog" : section === "orders" ? "Order operations" : section === "returns" ? "Returns & refunds" : section === "inventory" ? "Stock operations" : section === "customers" ? "Customer management" : section === "reviews" ? "Review moderation" : section === "notifications" ? "Notification centre" : section === "email-outbox" ? "Email operations" : `Good day, ${user?.name?.split(" ")[0]}.`}</h1></div><div className="admin-avatar">{user?.name?.charAt(0)?.toUpperCase()}</div></header>
         {error && <div className="admin-alert error" role="alert">{error}</div>}
         {notice && <div className="admin-alert success" role="status">{notice}</div>}
 
@@ -197,7 +199,7 @@ const AdminDashboard = () => {
               </article>;
             })}
           </section>
-        </> : section === "products" ? <AdminProducts /> : section === "orders" ? <AdminOrders /> : section === "returns" ? <AdminReturns /> : section === "inventory" ? <AdminInventory /> : section === "customers" ? <AdminCustomers /> : section === "reviews" ? <AdminReviews /> : section === "notifications" ? <Notifications embedded onAdminNavigate={navigateSection} /> : <AdminEmailOutbox />}
+        </> : section === "automatic-offer" ? <AdminAutomaticOffer /> : section === "products" ? <AdminProducts /> : section === "orders" ? <AdminOrders /> : section === "returns" ? <AdminReturns /> : section === "inventory" ? <AdminInventory /> : section === "customers" ? <AdminCustomers /> : section === "reviews" ? <AdminReviews /> : section === "notifications" ? <Notifications embedded onAdminNavigate={navigateSection} /> : <AdminEmailOutbox />}
       </main>
     </div>
   );

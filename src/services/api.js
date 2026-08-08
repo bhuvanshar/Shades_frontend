@@ -276,6 +276,58 @@ export const validateCoupon = (accessToken, couponCode) =>
     body: JSON.stringify({ couponCode }),
   });
 
+// ── Automatic quantity offer ─────────────────────────────────────────────────────────────────
+//
+// Two public reads and an admin CRUD set. The public pair deliberately does not go through
+// authenticatedRequest: the banner renders for a signed-out visitor and a guest bag has to be
+// priceable, so neither may require a token. They still go through `request`, which supplies the
+// CSRF header the quote POST needs.
+
+/** The offer in force right now. Resolves to {active:false} rather than throwing when there is none. */
+export const getActiveAutomaticOffer = async () => {
+  const response = await request("/offers/automatic/active");
+  return parseResponse(response);
+};
+
+/**
+ * Asks the server what a cart costs.
+ *
+ * `lines` carries variant ids and quantities only. The response's totalAmount is the number
+ * checkout sends back as expectedTotalAmount, so the estimate the customer confirms and the amount
+ * the server will charge are the same figure computed once, on the server, from current prices.
+ */
+export const quoteCart = async (lines, { couponCode } = {}) => {
+  const query = couponCode ? `?couponCode=${encodeURIComponent(couponCode)}` : "";
+  const response = await request(`/offers/automatic/quote${query}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lines }),
+  });
+  return parseResponse(response);
+};
+
+export const getAutomaticOffers = (accessToken) =>
+  authenticatedRequest("/offers/automatic/admin?size=100&sort=automaticOfferId,desc", accessToken);
+
+export const createAutomaticOffer = (accessToken, offer) =>
+  authenticatedRequest("/offers/automatic/admin", accessToken, {
+    method: "POST", body: JSON.stringify(offer),
+  });
+
+export const updateAutomaticOffer = (accessToken, offerId, offer) =>
+  authenticatedRequest(`/offers/automatic/admin/${offerId}`, accessToken, {
+    method: "PUT", body: JSON.stringify(offer),
+  });
+
+/** `version` is required: the server answers 409 if the offer moved on since it was loaded. */
+export const setAutomaticOfferActive = (accessToken, offerId, active, version) =>
+  authenticatedRequest(
+    `/offers/automatic/admin/${offerId}/active?active=${active}&version=${version}`,
+    accessToken, { method: "PATCH" });
+
+export const archiveAutomaticOffer = (accessToken, offerId) =>
+  authenticatedRequest(`/offers/automatic/admin/${offerId}`, accessToken, { method: "DELETE" });
+
 export const setCouponActive = (accessToken, couponId, active) =>
   authenticatedRequest(`/coupons/${couponId}/active?active=${active}`, accessToken, { method: "PATCH" });
 

@@ -7,7 +7,8 @@ const KEY = "shades_world_guest_cart";
 const mockAuth = { accessToken: null, user: null, isAdmin: false };
 jest.mock("./AuthContext", () => ({ useAuth: () => mockAuth }));
 jest.mock("../services/api", () => ({ getStoreProducts: jest.fn(), getCart: jest.fn(), updateCartItem: jest.fn(),
-  addCartItem: jest.fn(), removeCartItem: jest.fn(), getWishlist: jest.fn(), addWishlistItem: jest.fn(), removeWishlistItem: jest.fn() }));
+  addCartItem: jest.fn(), removeCartItem: jest.fn(), getWishlist: jest.fn(), addWishlistItem: jest.fn(), removeWishlistItem: jest.fn(),
+  quoteCart: jest.fn() }));
 
 function Harness() {
   const store = useContext(StoreContext);
@@ -27,6 +28,7 @@ beforeEach(() => {
   Object.assign(mockAuth, { accessToken: null, user: null, isAdmin: false });
   api.getStoreProducts.mockResolvedValue({ content: [] });
   api.getWishlist.mockResolvedValue({ items: [] });
+  api.quoteCart.mockResolvedValue(null);
   api.getCart.mockResolvedValue({ items: [] });
   api.addCartItem.mockResolvedValue({ items: [] });
 });

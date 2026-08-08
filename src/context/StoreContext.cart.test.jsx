@@ -6,7 +6,10 @@ import * as api from "../services/api";
 const mockAuth = { accessToken:"cookie-session", user:{ userId:7 }, isAdmin:false };
 jest.mock("./AuthContext", () => ({ useAuth: () => mockAuth }));
 jest.mock("../services/api", () => ({ getStoreProducts:jest.fn(), getCart:jest.fn(), updateCartItem:jest.fn(),
-  addCartItem:jest.fn(), removeCartItem:jest.fn(), getWishlist:jest.fn(), addWishlistItem:jest.fn(), removeWishlistItem:jest.fn() }));
+  addCartItem:jest.fn(), removeCartItem:jest.fn(), getWishlist:jest.fn(), addWishlistItem:jest.fn(), removeWishlistItem:jest.fn(),
+  // The store asks the server to price the bag whenever it changes. Stubbed because these tests are
+  // about cart state rather than money; beforeEach resolves it to an empty quote.
+  quoteCart:jest.fn() }));
 
 function Harness() { const store = useContext(StoreContext); return <><output aria-label="quantity">{store.cartItems["14:13"] || 0}</output><output aria-label="pink quantity">{store.cartItems["14:14"] || 0}</output><output aria-label="cart error">{store.cartError}</output><output aria-label="products">{store.product_list.length}</output><button onClick={() => store.addToCart("14",13)}>add blue</button><button onClick={() => store.addToCart("14",14)}>add pink</button><button onClick={() => store.removeFromCart("14",13)}>decrease</button></>; }
 
@@ -20,6 +23,7 @@ beforeEach(() => {
   api.getStoreProducts.mockResolvedValue({ content:[] }); api.getWishlist.mockResolvedValue({ items:[] });
   api.getCart.mockResolvedValue({ items:[{ productId:14, variantId:13, quantity:3 }] });
   api.updateCartItem.mockResolvedValue({ items:[] }); api.removeCartItem.mockResolvedValue({ items:[] });
+  api.quoteCart.mockResolvedValue(null);
 });
 
 test("rapid decrements use the latest intended quantity and are serialized", async () => {

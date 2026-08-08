@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import "./PlaceOrder.css";
 import { StoreContext, resolveCartLines } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
@@ -22,7 +22,7 @@ const shortDate = (value) => value.toLocaleDateString("en-IN", { day: "numeric",
 
 const PlaceOrder = () => {
   const { accessToken } = useAuth();
-  const { cartItems, product_list, productsLoading, productsError, getTotalCartAmount, appliedOffer, clearCartState, getCartCount, cartSyncing } = useContext(StoreContext);
+  const { cartItems, product_list, productsLoading, productsError, getTotalCartAmount, appliedOffer, clearCartState, getCartCount, cartSyncing, quote, quoteLoading } = useContext(StoreContext);
   const navigate = useNavigate();
   const [addresses, setAddresses] = useState([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
@@ -33,6 +33,15 @@ const PlaceOrder = () => {
   const [error, setError] = useState("");
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [pendingOrderId, setPendingOrderId] = useState(null);
+  // Generated once for the life of this checkout page. crypto.randomUUID is unavailable on some
+  // older mobile browsers, so a timestamp-and-random fallback keeps the guarantee rather than
+  // dropping the key and silently allowing a duplicate order.
+  const idempotencyKeyRef = useRef(null);
+  if (idempotencyKeyRef.current === null) {
+    idempotencyKeyRef.current = typeof crypto !== "undefined" && crypto.randomUUID
+      ? `co-${crypto.randomUUID()}`
+      : `co-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  }
 
   useEffect(() => {
     let active = true;
@@ -49,12 +58,19 @@ const PlaceOrder = () => {
     return () => { active = false; };
   }, [accessToken]);
 
-  const subtotal = getTotalCartAmount();
-  const discount = Math.min(subtotal, Number(appliedOffer?.calculatedDiscount || 0));
-  const taxable = Math.max(0, subtotal - discount);
-  const tax = Number((taxable * 0.18).toFixed(2));
-  const shipping = subtotal === 0 || subtotal >= 500 ? 0 : 49;
-  const estimatedTotal = taxable + tax + shipping;
+  // Checkout shows only server figures. The bag may fall back to a client-side subtotal while the
+  // quote is in flight; this page will not submit at all until the quote is here, because the number
+  // it sends as expectedTotalAmount has to be the server's own — order creation compares the two and
+  // refuses on any difference, which is what guarantees the customer is never charged an amount they
+  // did not see.
+  const priced = Boolean(quote);
+  const subtotal = priced ? Number(quote.subtotal) : getTotalCartAmount();
+  const discount = priced ? Number(quote.discount) : 0;
+  const tax = priced ? Number(quote.taxAmount) : 0;
+  const shipping = priced ? Number(quote.shippingAmount) : 0;
+  const estimatedTotal = priced ? Number(quote.totalAmount) : subtotal;
+  const offerQuote = quote?.automaticOffer;
+  const automaticApplied = quote?.appliedPromotion === "AUTOMATIC_OFFER";
   const itemCount = getCartCount();
   // The same resolver the bag and the badge use: an unresolvable line is reviewed as such
   // rather than vanishing from a checkout whose own summary still counts it.
@@ -69,9 +85,10 @@ const PlaceOrder = () => {
   const newAddressPincodeError = useNewAddress ? pincodeError(address.pincode, address.country) : "";
   const newAddressPhoneError = useNewAddress ? phoneError(address.phoneNumber) : "";
   const canSubmit = useMemo(() => itemCount > 0 && !submitting && !loadingAddresses && !cartSyncing
+    && priced && !quoteLoading
     && unavailableLines.length === 0 && !catalogueBlocked && !newAddressPincodeError && !newAddressPhoneError
     && reviewConfirmed && (useNewAddress || selectedAddressId),
-  [itemCount, submitting, loadingAddresses, cartSyncing, unavailableLines.length, catalogueBlocked, newAddressPincodeError, newAddressPhoneError, reviewConfirmed, useNewAddress, selectedAddressId]);
+  [itemCount, submitting, loadingAddresses, cartSyncing, priced, quoteLoading, unavailableLines.length, catalogueBlocked, newAddressPincodeError, newAddressPhoneError, reviewConfirmed, useNewAddress, selectedAddressId]);
 
   useEffect(() => { setReviewConfirmed(false); }, [estimatedTotal, itemCount]);
 
@@ -109,6 +126,10 @@ const PlaceOrder = () => {
           billingAddressId: shippingAddressId,
           couponCode: appliedOffer?.couponCode || null,
           expectedTotalAmount: Number(estimatedTotal.toFixed(2)),
+          // One key per checkout attempt, held in a ref so a retry after an interrupted payment
+          // reuses it. The server returns the original order rather than placing a second one, so
+          // the offer cannot be applied twice and stock cannot be deducted twice.
+          idempotencyKey: idempotencyKeyRef.current,
         });
         setPendingOrderId(createdOrder.orderId);
       }
@@ -211,7 +232,29 @@ const PlaceOrder = () => {
             <div className="checkout-summary">
               <h2>Order summary</h2>
               <div className="checkout-row"><span>{itemCount} units</span><span>{money(subtotal)}</span></div>
-              {appliedOffer && <div className="checkout-row checkout-discount"><span>Offer ({appliedOffer.couponCode})</span><span>−{money(discount)}</span></div>}
+              {/* Same transparent breakdown as the bag, from the same server quote, so the customer
+                  is confirming the figures they were shown rather than a recalculation. */}
+              {offerQuote && (
+                <div className="checkout-offer" data-testid="checkout-automatic-offer">
+                  <strong>{offerQuote.offerName}</strong>
+                  <small>{offerQuote.termsMessage}</small>
+                  {offerQuote.completeGroups > 0 && (
+                    <small data-testid="checkout-offer-calc">
+                      {offerQuote.completeGroups} qualifying {offerQuote.completeGroups === 1 ? "group" : "groups"} × {money(offerQuote.discountPerGroup)}
+                    </small>
+                  )}
+                  {offerQuote.progressMessage && <small>{offerQuote.progressMessage}</small>}
+                </div>
+              )}
+              {(automaticApplied || quote?.appliedPromotion === "COUPON") && (
+                <div className="checkout-row checkout-discount" data-testid="checkout-discount-row">
+                  <span>{quote.appliedPromotionLabel}</span>
+                  <span aria-label={`Discount ${money(discount)}`}>−{money(discount)}</span>
+                </div>
+              )}
+              {quote?.suppressedPromotionReason && (
+                <p className="checkout-note" role="status">{quote.suppressedPromotionReason}</p>
+              )}
               <div className="checkout-row"><span>Estimated tax</span><span>{money(tax)}</span></div>
               <div className="checkout-row"><span>Shipping</span><span>{shipping === 0 ? "Free" : money(shipping)}</span></div>
               <div className="checkout-divider" />
@@ -220,6 +263,9 @@ const PlaceOrder = () => {
               <div className="checkout-confirmation-card"><span>Estimated delivery</span><strong>{deliveryStart}–{deliveryEnd}</strong><p>Standard delivery, subject to fulfilment and courier availability.</p></div>
               <p className="checkout-note">The server recalculates current prices, stock, tax and offers. If the final amount differs from {money(estimatedTotal)}, no order or payment will be created.</p>
               {cartSyncing && <p className="checkout-note">Updating your bag before checkout…</p>}
+              {(quoteLoading || !priced) && itemCount > 0 && (
+                <p className="checkout-note" role="status">Confirming the current price and offer…</p>
+              )}
               {error && <p className="checkout-error" role="alert">{error}</p>}
               <label className="checkout-confirm"><input type="checkbox" checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} /> <span>I reviewed the items, variants, quantities, delivery address and final amount.</span></label>
               <button type="submit" className="checkout-pay-btn" disabled={!canSubmit}>

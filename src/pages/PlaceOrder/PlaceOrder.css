@@ -227,3 +227,19 @@
   font-size: 11px;
   letter-spacing: 0.3px;
 }
+
+/* Automatic offer block in the checkout summary. Stacked rather than side-by-side because the terms
+   line is a sentence, and squeezing it beside an amount is what makes offer terms unreadable. */
+.checkout-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border-soft, #e5e1da);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: var(--bg-sand, #faf8f5);
+}
+
+.checkout-offer strong { font-size: 13px; }
+.checkout-offer small { font-size: 11px; color: var(--text-muted, #6b6b66); line-height: 1.4; }

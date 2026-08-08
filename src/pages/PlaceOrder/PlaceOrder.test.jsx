@@ -19,6 +19,18 @@ const store = {
   clearCartState: jest.fn(),
   getCartCount: () => 2,
   cartSyncing: false,
+  // Checkout now displays and submits the server's quote rather than its own arithmetic, and will
+  // not submit at all until that quote has arrived — the amount sent back as expectedTotalAmount has
+  // to be the server's own figure. These are the numbers the server would return for two units at
+  // ₹123 with no offer in force: ₹246 + 18% tax + ₹49 shipping under the free-shipping threshold.
+  quote: {
+    subtotal: 246, itemQuantity: 2, discount: 0, taxableAmount: 246,
+    taxAmount: 44.28, shippingAmount: 49, totalAmount: 339.28,
+    appliedPromotion: "NONE", appliedPromotionLabel: null,
+    suppressedPromotionLabel: null, suppressedPromotionReason: null,
+    automaticOffer: null, unresolvedVariantIds: [],
+  },
+  quoteLoading: false,
 };
 
 beforeEach(() => {
