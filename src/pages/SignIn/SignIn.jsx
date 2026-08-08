@@ -3,7 +3,92 @@ import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import BrandWordmark from "../../components/BrandWordmark/BrandWordmark";
 import { forgotPassword, resendVerification, resetPassword, verifyEmail } from "../../services/api";
+import { phoneError } from "../../services/phone";
 import "./SignIn.css";
+
+/**
+ * Backend field name -> the form control that owns it. The registration DTO happens to use the
+ * same names as this form, so most entries are identity; the map exists so a rename on either side
+ * fails loudly here instead of silently dropping a message on the floor. Anything unrecognised is
+ * kept under its own key rather than discarded — an unmapped message still belongs on screen.
+ */
+const FIELD_ALIASES = { name: "name", email: "email", phoneNumber: "phoneNumber", password: "password" };
+/** Form field -> the id already on that input, used for focus and for aria-describedby. */
+const FIELD_DOM_ID = {
+  name: "register-name",
+  email: "signin-email",
+  password: "signin-password",
+  confirmPassword: "register-confirm-password",
+  phoneNumber: "register-phone",
+};
+const mapValidationErrors = (validationErrors) => {
+  if (!validationErrors || typeof validationErrors !== "object") return {};
+  return Object.entries(validationErrors).reduce((mapped, [field, message]) => {
+    if (typeof message === "string" && message.trim()) mapped[FIELD_ALIASES[field] || field] = message;
+    return mapped;
+  }, {});
+};
+/** Moves focus to the first field the server rejected, so a keyboard user is not left hunting. */
+const focusField = (field) => {
+  const control = document.getElementById(FIELD_DOM_ID[field] || field);
+  if (control && typeof control.focus === "function") control.focus();
+};
+
+/**
+ * Client-side mirror of RegisterRequest's bean validation, so a required or malformed field is
+ * named immediately instead of after a round trip.
+ *
+ * The messages are copied verbatim from the server's annotations — "Name is required",
+ * "Invalid email format", "Password must be between 8 and 100 characters" — so the customer sees
+ * the same sentence whichever side rejects it, and a change on one side that is not mirrored here
+ * shows up as two different wordings rather than silently diverging behaviour.
+ *
+ * Deliberately no stricter than the backend. phoneNumber carries only @Size(max = 20) server-side,
+ * so this checks length and nothing else: inventing a format rule here would reject numbers the
+ * API would happily accept, which is its own kind of desync.
+ *
+ * Values are trimmed before checking because the server trims too (AuthenticationServiceImpl
+ * normalises name, email and phone), so "   " must fail as empty rather than pass as three
+ * characters.
+ */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const validateRegistration = ({ name, email, password, confirmPassword, phoneNumber }) => {
+  const errors = {};
+  const trimmedName = (name || "").trim();
+  const trimmedEmail = (email || "").trim();
+  const trimmedPhone = (phoneNumber || "").trim();
+
+  if (!trimmedName) errors.name = "Name is required";
+  else if (trimmedName.length > 255) errors.name = "Name cannot be longer than 255 characters";
+
+  if (!trimmedEmail) errors.email = "Email is required";
+  else if (!EMAIL_SHAPE.test(trimmedEmail)) errors.email = "Invalid email format";
+  else if (trimmedEmail.length > 255) errors.email = "Email cannot be longer than 255 characters";
+
+  if (!password) errors.password = "Password is required";
+  else if (password.length < 8 || password.length > 100) {
+    errors.password = "Password must be between 8 and 100 characters";
+  }
+
+  // confirmPassword has no server counterpart — it is never sent — so this is the only place it
+  // can be checked.
+  if (!confirmPassword) errors.confirmPassword = "Confirm your password";
+  else if (password && password !== confirmPassword) {
+    errors.confirmPassword = "This does not match the password above.";
+  }
+
+  // Optional, but if given it must be a real Indian mobile — the same rule PhoneNumbers enforces
+  // on the server, reached through the one shared client module so the forms cannot drift.
+  const phoneProblem = phoneError(trimmedPhone);
+  if (phoneProblem) errors.phoneNumber = phoneProblem;
+
+  return errors;
+};
+
+/** One field's message, tied to its input by id via aria-describedby. Renders nothing when clean. */
+const FieldError = ({ id, message }) => (message
+  ? <p id={id} className="signin-field-error" role="alert">{message}</p>
+  : null);
 
 const SignIn = () => {
   const [mode, setMode] = useState("signin");
@@ -17,6 +102,15 @@ const SignIn = () => {
   const [notice, setNotice] = useState("");
   const [googleStatus, setGoogleStatus] = useState("loading");
   const [submitting, setSubmitting] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
+  // Clears one field's message the moment the customer edits it, so a corrected field stops
+  // looking wrong without waiting for another round trip. Other fields keep their messages.
+  const clearFieldError = (field) => setFieldErrors((current) => {
+    if (!current[field]) return current;
+    const next = { ...current };
+    delete next[field];
+    return next;
+  });
   const { signIn, register, signInWithGoogle, isAuthenticated, isAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -101,9 +195,23 @@ const SignIn = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
-    if (registering && password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
+    setFieldErrors({});
+    // Guard against a double submit. `submitting` already disables the button, but a rapid second
+    // Enter can land before React re-renders, and registration must create exactly one account.
+    if (submitting) return;
+
+    if (registering) {
+      const invalid = validateRegistration({ name, email, password, confirmPassword, phoneNumber });
+      if (Object.keys(invalid).length) {
+        setFieldErrors(invalid);
+        setError("Please correct the highlighted fields.");
+        // Focus the first invalid field in FORM order, not object order, so focus moves down the
+        // page rather than to whichever key the validator happened to write first.
+        const firstInvalid = ["name", "email", "password", "confirmPassword", "phoneNumber"]
+          .find((field) => invalid[field]);
+        focusField(firstInvalid);
+        return;
+      }
     }
     setSubmitting(true);
     try {
@@ -117,7 +225,17 @@ const SignIn = () => {
       const requestedPath = location.state?.from?.pathname;
       navigate(user.roles?.includes("ADMIN") ? "/admin" : requestedPath || "/", { replace: true });
     } catch (err) {
-      setError(err.message || (registering ? "Unable to create your account." : "Unable to sign in."));
+      // A bean-validation failure carries one message per field. Render those against their inputs
+      // and keep err.message only as a summary — it is deliberately generic on the server, so on
+      // its own it tells the customer nothing actionable.
+      const fields = mapValidationErrors(err.validationErrors);
+      if (Object.keys(fields).length) {
+        setFieldErrors(fields);
+        setError(err.message || "Please correct the highlighted fields.");
+        focusField(Object.keys(fields)[0]);
+      } else {
+        setError(err.message || (registering ? "Unable to create your account." : "Unable to sign in."));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -134,7 +252,12 @@ const SignIn = () => {
     finally { setSubmitting(false); }
   };
 
-  const canSubmit = email && password && (!registering || (name.trim() && confirmPassword));
+  // Registration stays submittable even when empty. A disabled button tells a customer only that
+  // something is wrong somewhere; submitting and getting "Name is required" under the name box
+  // tells them what to do. Validation, not the button, is what refuses an incomplete form — and it
+  // refuses it before any request is made. Sign-in keeps its original guard: it has two fields, and
+  // there is no per-field message to reveal by letting it through.
+  const canSubmit = registering || (email && password);
 
   const handleRecovery = async (event) => {
     event.preventDefault(); setError(""); setNotice(""); setSubmitting(true);
@@ -216,23 +339,36 @@ const SignIn = () => {
             {notice && <div className="signin-success" role="status">{notice}</div>}
             {registering && <>
               <label htmlFor="register-name">Full name</label>
-              <input id="register-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="Your full name" maxLength="255" required />
+              <input id="register-name" type="text" value={name} onChange={(e) => { setName(e.target.value); clearFieldError("name"); }} autoComplete="name" placeholder="Your full name" maxLength="255" required
+                aria-invalid={Boolean(fieldErrors.name)} aria-describedby={fieldErrors.name ? "register-name-error" : undefined} />
+              <FieldError id="register-name-error" message={fieldErrors.name} />
             </>}
             <label htmlFor="signin-email">Email address</label>
-            <input id="signin-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="you@example.com" maxLength="255" required />
+            <input id="signin-email" type="email" value={email} onChange={(e) => { setEmail(e.target.value); clearFieldError("email"); }} autoComplete="email" placeholder="you@example.com" maxLength="255" required
+              aria-invalid={Boolean(fieldErrors.email)} aria-describedby={fieldErrors.email ? "signin-email-error" : undefined} />
+            <FieldError id="signin-email-error" message={fieldErrors.email} />
 
             <div className="signin-password-row">
               <label htmlFor="signin-password">Password</label>
               <button type="button" onClick={() => setShowPassword((value) => !value)}>{showPassword ? "Hide" : "Show"}</button>
             </div>
-            <input id="signin-password" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={registering ? "new-password" : "current-password"} placeholder="Enter your password" minLength="8" maxLength="100" required />
+            <input id="signin-password" type={showPassword ? "text" : "password"} value={password} onChange={(e) => { setPassword(e.target.value); clearFieldError("password"); }} autoComplete={registering ? "new-password" : "current-password"} placeholder="Enter your password" minLength="8" maxLength="100" required
+              aria-invalid={Boolean(fieldErrors.password)} aria-describedby={fieldErrors.password ? "signin-password-error" : undefined} />
+            <FieldError id="signin-password-error" message={fieldErrors.password} />
 
             {registering && <>
+              {/* Stated before submission, not only after a rejection. */}
               <p className="signin-password-hint">Use at least 8 characters.</p>
               <label htmlFor="register-confirm-password">Confirm password</label>
-              <input id="register-confirm-password" type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" placeholder="Enter your password again" minLength="8" maxLength="100" required />
+              <input id="register-confirm-password" type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(e) => { setConfirmPassword(e.target.value); clearFieldError("confirmPassword"); }} autoComplete="new-password" placeholder="Enter your password again" minLength="8" maxLength="100" required
+                aria-invalid={Boolean(fieldErrors.confirmPassword)} aria-describedby={fieldErrors.confirmPassword ? "register-confirm-password-error" : undefined} />
+              <FieldError id="register-confirm-password-error" message={fieldErrors.confirmPassword} />
               <label htmlFor="register-phone">Phone number <span className="signin-optional">Optional</span></label>
-              <input id="register-phone" type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} autoComplete="tel" placeholder="Your phone number" maxLength="20" />
+              {/* type="tel" + inputMode="numeric" gives a phone keypad on mobile. Never type="number":
+                  that would accept "e", "." and "-" and can strip a leading zero on paste. */}
+              <input id="register-phone" type="tel" inputMode="numeric" value={phoneNumber} onChange={(e) => { setPhoneNumber(e.target.value); clearFieldError("phoneNumber"); }} autoComplete="tel" placeholder="10-digit mobile number" maxLength="20"
+                aria-invalid={Boolean(fieldErrors.phoneNumber)} aria-describedby={fieldErrors.phoneNumber ? "register-phone-error" : undefined} />
+              <FieldError id="register-phone-error" message={fieldErrors.phoneNumber} />
             </>}
 
             {!registering && <div className="signin-options">

@@ -66,7 +66,11 @@ test("Keep order closes the dialog, preserves the order and restores focus", asy
   fireEvent.click(screen.getByRole("button", { name: "Keep order" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(api.cancelOrder).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Cancel order" })).toHaveFocus();
+  // Awaited, because restoring focus is deliberately deferred by a task. Closing via a button
+  // inside the dialog destroys the focused element, and the browser's own reset of focus to
+  // <body> lands after the effect cleanup — a synchronous restore was silently undone by it.
+  // The assertion is the same; only the timing it tolerates has changed.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Cancel order" })).toHaveFocus());
 });
 
 test("Escape closes the dialog without cancelling", async () => {

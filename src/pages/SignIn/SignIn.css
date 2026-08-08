@@ -43,3 +43,7 @@
 .signin-back { display: block; color: #686a64; text-align: center; font-size: 12px; }
 .route-loading { min-height: 70vh; display: grid; place-items: center; color: #6b6b6b; }
 @media (max-width: 850px) { .signin-page { grid-template-columns: 1fr; } .signin-story { display: none; } .signin-panel { min-height: 100vh; padding: 38px 22px; } .signin-mobile-brand { display: block; margin-bottom: 58px; } .signin-card h2 { font-size: 40px; } }
+
+/* Per-field validation message, sat directly beneath its input. The form-level banner above is a
+   summary only — the backend's message for a bean-validation failure is deliberately generic. */
+.signin-field-error{margin:-6px 0 12px;color:#8b332a;font-size:12px;line-height:1.45}

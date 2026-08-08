@@ -13,7 +13,14 @@ const watch = (page) => {
   page.on("requestfailed", (request) => {
     // Navigation aborts are a normal consequence of redirecting mid-flight, not a defect.
     const failure = request.failure()?.errorText || "";
-    if (!/ERR_ABORTED|net::ERR_ABORTED/.test(failure)) problems.failedRequests.push(`${request.url()} ${failure}`);
+    if (/ERR_ABORTED|net::ERR_ABORTED/.test(failure)) return;
+    // images.test is a deliberately unresolvable host used by variant-default-selection.spec.js to
+    // bind photos to variants (a variant image is identified purely by a /variants/<id>/ segment in
+    // its URL). Those fixture products live in the shared catalogue, so any spec that browses the
+    // storefront will try to load them and get ERR_NAME_NOT_RESOLVED. That is test data failing to
+    // resolve, not the application failing a request — every real request is still asserted.
+    if (/images\.test/.test(request.url())) return;
+    problems.failedRequests.push(`${request.url()} ${failure}`);
   });
   return problems;
 };

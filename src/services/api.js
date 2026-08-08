@@ -10,6 +10,14 @@ const parseResponse = async (response) => {
   if (!response.ok) {
     const error = new Error(payload?.message || "Something went wrong. Please try again.");
     error.status = response.status;
+    // The backend answers a bean-validation failure with a DELIBERATELY generic `message`
+    // ("One or more fields have validation errors") and puts the useful part — one message per
+    // field — in `validationErrors`. Reading only `message` is what made registration tell a
+    // customer that something was wrong without ever saying what. Carrying the map here lets a
+    // form put each message against its own input; forms that ignore it are unaffected.
+    if (payload?.validationErrors && typeof payload.validationErrors === "object") {
+      error.validationErrors = payload.validationErrors;
+    }
     throw error;
   }
   if (payload?.content && payload?.page) payload = { ...payload, ...payload.page };

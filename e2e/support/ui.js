@@ -42,7 +42,10 @@ const submitSignIn = async (page, account, { attempts = 2, admin = false } = {})
 /** Fills the checkout's new-address form, leaving pincode to the caller. */
 const fillCheckoutAddress = async (page, { pincode, country = "India" } = {}) => {
   await page.getByPlaceholder("Recipient name").fill("E2E Buyer");
-  await page.getByPlaceholder("Phone number").fill("9876543210");
+  // Located by its attributes, not its placeholder. The placeholder changed from "Phone number" to
+  // "10-digit mobile number" when phone validation landed, which silently broke every spec that
+  // checks out. type/autocomplete are part of the field's contract; the wording is not.
+  await page.locator('input[type="tel"][autocomplete="tel"]').first().fill("9876543210");
   await page.getByPlaceholder("Street address").fill("1 Test Street");
   await page.getByPlaceholder("City").fill("Bengaluru");
   await page.getByPlaceholder("State").fill("Karnataka");

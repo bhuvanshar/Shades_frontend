@@ -4,6 +4,7 @@ import { StoreContext, resolveCartLines } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 import { createAddress, createOrder, getAddresses, processMockPayment } from "../../services/api";
 import { pincodeError, sanitisePincode } from "../../services/pincode";
+import { phoneError } from "../../services/phone";
 import { Link, useNavigate } from "react-router-dom";
 
 const emptyAddress = {
@@ -66,10 +67,11 @@ const PlaceOrder = () => {
   const deliveryEnd = shortDate(addBusinessDays(new Date(), 5));
   // Only validated for a new address; a saved one was already validated server-side when stored.
   const newAddressPincodeError = useNewAddress ? pincodeError(address.pincode, address.country) : "";
+  const newAddressPhoneError = useNewAddress ? phoneError(address.phoneNumber) : "";
   const canSubmit = useMemo(() => itemCount > 0 && !submitting && !loadingAddresses && !cartSyncing
-    && unavailableLines.length === 0 && !catalogueBlocked && !newAddressPincodeError
+    && unavailableLines.length === 0 && !catalogueBlocked && !newAddressPincodeError && !newAddressPhoneError
     && reviewConfirmed && (useNewAddress || selectedAddressId),
-  [itemCount, submitting, loadingAddresses, cartSyncing, unavailableLines.length, catalogueBlocked, newAddressPincodeError, reviewConfirmed, useNewAddress, selectedAddressId]);
+  [itemCount, submitting, loadingAddresses, cartSyncing, unavailableLines.length, catalogueBlocked, newAddressPincodeError, newAddressPhoneError, reviewConfirmed, useNewAddress, selectedAddressId]);
 
   useEffect(() => { setReviewConfirmed(false); }, [estimatedTotal, itemCount]);
 
@@ -158,7 +160,11 @@ const PlaceOrder = () => {
             {useNewAddress && (
               <div className="new-address-form">
                 <input value={address.recipientName} onChange={changeAddress("recipientName")} type="text" placeholder="Recipient name" maxLength="255" required />
-                <input value={address.phoneNumber} onChange={changeAddress("phoneNumber")} type="tel" placeholder="Phone number" maxLength="20" />
+                {/* inputMode="numeric" for a phone keypad; never type="number", which accepts
+                    "e", "." and "-" and can drop a leading zero on paste. */}
+                <input value={address.phoneNumber} onChange={changeAddress("phoneNumber")} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit mobile number" maxLength="20"
+                  aria-invalid={Boolean(newAddressPhoneError)} aria-describedby={newAddressPhoneError ? "checkout-phone-error" : undefined} />
+                {newAddressPhoneError && <small id="checkout-phone-error" className="checkout-field-error" role="alert">{newAddressPhoneError}</small>}
                 <input value={address.addressLine1} onChange={changeAddress("addressLine1")} type="text" placeholder="Street address" maxLength="255" required />
                 <input value={address.addressLine2} onChange={changeAddress("addressLine2")} type="text" placeholder="Apartment, suite, etc. (optional)" maxLength="255" />
                 <div className="field-row">
