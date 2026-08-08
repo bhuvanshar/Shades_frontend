@@ -13,6 +13,7 @@ const unique = (label) => `e2e.${label}-${process.pid}-${Date.now()}@example.tes
 const VALID_PASSWORD = "E2ePassw0rd!";
 
 const { observe, clean } = require("./support/observe");
+const { submitRegistration } = require("./support/ui");
 const watch = observe;
 
 const openRegister = async (page) => {
@@ -29,6 +30,11 @@ const fillRegistration = async (page, { name, email, password, confirmPassword, 
   if (phone !== undefined) await page.getByLabel(/Phone number/).fill(phone);
 };
 
+// Two submit paths, and the difference matters. `submit` is a bare click, for the cases where
+// validateRegistration rejects the form in the browser and nothing is sent — there is no response to
+// wait for. Anything that does reach POST /auth/register goes through submitRegistration, which
+// waits out AuthRateLimitFilter; this spec creates several accounts and is the one place in the suite
+// that registers through the form rather than the API, so it is the one place with no other backoff.
 const submit = (page) => page.locator(".signin-submit").click();
 const errorFor = (page, id) => page.locator(`#${id}-error`);
 
@@ -102,7 +108,7 @@ test("a valid submission creates exactly one CUSTOMER account and does not clear
     name: "  Ada Lovelace-O'Brien  ", email: `  ${email}  `, password: VALID_PASSWORD,
     confirmPassword: VALID_PASSWORD, phone: "9876543210",
   });
-  await submit(page);
+  await submitRegistration(page);
 
   // The product flow is: register, then land back on sign-in with a verification notice.
   await expect(page.locator(".signin-success")).toBeVisible({ timeout: 20_000 });
@@ -131,12 +137,12 @@ test("an already registered email is refused clearly, and the typed values survi
   const email = unique("dupe");
   await openRegister(page);
   await fillRegistration(page, { name: "First Owner", email, password: VALID_PASSWORD, confirmPassword: VALID_PASSWORD });
-  await submit(page);
+  await submitRegistration(page);
   await expect(page.locator(".signin-success")).toBeVisible({ timeout: 20_000 });
 
   await openRegister(page);
   await fillRegistration(page, { name: "Second Owner", email, password: VALID_PASSWORD, confirmPassword: VALID_PASSWORD });
-  await submit(page);
+  await submitRegistration(page);
 
   await expect(page.locator(".signin-error")).toContainText(/already registered/i, { timeout: 20_000 });
   // No second row, and nothing about the existing account is disclosed beyond "it exists".
@@ -152,10 +158,17 @@ test("rapid double submission creates only one account", async ({ page }) => {
   await openRegister(page);
   await fillRegistration(page, { name: "Double Click", email, password: VALID_PASSWORD, confirmPassword: VALID_PASSWORD });
 
+  // The three clicks are the test, so they are handed to submitRegistration as the submit action
+  // rather than replaced by it: a rate limit retries the whole rapid-click sequence on the still
+  // filled-in form, which is the same scenario again, not a weaker one.
   const button = page.locator(".signin-submit");
-  await button.click();
-  await button.click({ force: true }).catch(() => {});
-  await button.click({ force: true }).catch(() => {});
+  await submitRegistration(page, {
+    submit: async () => {
+      await button.click();
+      await button.click({ force: true }).catch(() => {});
+      await button.click({ force: true }).catch(() => {});
+    },
+  });
   await expect(page.locator(".signin-success")).toBeVisible({ timeout: 20_000 });
 
   expect(Number(sqlValue(`SELECT COUNT(*) FROM USERS WHERE EMAIL = '${email}'`)),
@@ -166,7 +179,7 @@ test("refresh and Back/Forward after registering do not resubmit the form", asyn
   const email = unique("history");
   await openRegister(page);
   await fillRegistration(page, { name: "History Test", email, password: VALID_PASSWORD, confirmPassword: VALID_PASSWORD });
-  await submit(page);
+  await submitRegistration(page);
   await expect(page.locator(".signin-success")).toBeVisible({ timeout: 20_000 });
 
   await page.reload();

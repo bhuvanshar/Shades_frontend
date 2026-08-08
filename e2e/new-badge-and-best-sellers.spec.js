@@ -244,17 +244,61 @@ test("the ranking counts paid orders, ignores cancelled ones and survives a dupl
     "a fully returned sale is not a sale").toBeUndefined();
 });
 
+/**
+ * How many units a brand-new product must sell to be inside the public ranking window at all.
+ *
+ * ProductServiceImpl clamps the endpoint's `limit` to MAX_BEST_SELLERS = 50, so a product ranked
+ * 51st is invisible to this API at *every* requested limit — asking for more rows cannot help.
+ * ECOMMERCE_TEST_DB accumulates products and paid orders across every run (383 products were
+ * eligible when this was written), and the fixture below used to sell a fixed two units and then
+ * look for the product in the top 50. That expired: two units tied with the 50th place on quantity,
+ * lost the revenue tiebreak, and landed the product at rank 51 — a correct application failing a
+ * test whose premise had quietly stopped holding.
+ *
+ * Selling strictly more than the 50th place's quantity makes the position deterministic instead of
+ * merely likely: at most 49 rows can exceed row 50's quantity, so however the ties below it fall,
+ * the product's rank is at most 50. The eligibility rules are restated here for the same reason
+ * netSoldFromDatabase restates them — the API cannot show us row 50 while we are the row being
+ * pushed out of it.
+ */
+const unitsToEnterRanking = () => Number(sqlValue(`
+  SELECT COALESCE(MIN(netQty), 0) + 1 FROM (
+    SELECT SUM(GREATEST(oi.QUANTITY - COALESCE(ret.q, 0), 0)) AS netQty
+    FROM ORDER_ITEMS oi
+    JOIN ORDERS o ON o.ORDER_ID = oi.ORDER_ID
+    JOIN PRODUCT_VARIANTS v ON v.VARIANT_ID = oi.VARIANT_ID
+    JOIN PRODUCTS p ON p.PRODUCT_ID = v.PRODUCT_ID
+    LEFT JOIN (SELECT ri.ORDER_ITEM_ID AS id, SUM(ri.QUANTITY) AS q FROM RETURN_ITEMS ri
+               JOIN RETURNS r ON r.RETURN_ID = ri.RETURN_ID
+               WHERE r.RETURN_STATUS IN ('RECEIVED','COMPLETED') GROUP BY ri.ORDER_ITEM_ID) ret
+           ON ret.id = oi.ORDER_ITEM_ID
+    WHERE o.ORDER_STATUS <> 'CANCELLED'
+      AND p.IS_ACTIVE = 1 AND p.PUBLISHED_AT IS NOT NULL
+      AND EXISTS (SELECT 1 FROM PAYMENTS pay WHERE pay.ORDER_ID = o.ORDER_ID
+                  AND pay.PAYMENT_STATUS IN ('PAID','PARTIALLY_REFUNDED'))
+      AND EXISTS (SELECT 1 FROM PRODUCT_VARIANTS av WHERE av.PRODUCT_ID = p.PRODUCT_ID
+                  AND av.IS_ACTIVE = 1 AND av.QUANTITY_AVAILABLE > 0)
+    GROUP BY v.PRODUCT_ID
+    HAVING netQty > 0
+    ORDER BY netQty DESC
+    LIMIT 50
+  ) ranking`));
+
 test("a product with no stock left drops out of the public ranking", async ({ page }) => {
   const stamp = Date.now();
+  const units = unitsToEnterRanking();
   const product = await createProduct({
     name: `E2E BS Stockout ${stamp}`,
-    variants: [{ sku: `BS-S-${stamp}`, variantName: "Last", color: "Last", price: 1000, quantityAvailable: 20 }],
+    // Stock above what is bought, so the product is genuinely in stock for the first assertion —
+    // being in the ranking *before* the stockout is half of what this test proves.
+    variants: [{ sku: `BS-S-${stamp}`, variantName: "Last", color: "Last", price: 1000, quantityAvailable: units + 5 }],
   });
   const account = await signInAsNewCustomer(page, "bsstock");
-  await addToBag(page, { productId: product.productId, quantity: 2, expectedBadge: 2 });
+  await addToBag(page, { productId: product.productId, quantity: units, expectedBadge: units });
   await checkout(page, { account });
 
-  expect((await bestSellers(page, 50)).some((row) => row.productId === product.productId)).toBe(true);
+  expect((await bestSellers(page, 50)).some((row) => row.productId === product.productId),
+    `${units} net units should place a new product inside the 50-row window`).toBe(true);
   sql(`UPDATE PRODUCT_VARIANTS SET QUANTITY_AVAILABLE = 0 WHERE PRODUCT_ID = ${product.productId}`);
   expect((await bestSellers(page, 50)).some((row) => row.productId === product.productId),
     "a completely out-of-stock product is not offered as a best seller").toBe(false);

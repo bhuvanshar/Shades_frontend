@@ -39,6 +39,39 @@ const submitSignIn = async (page, account, { attempts = 2, admin = false } = {})
   }
 };
 
+/**
+ * Submits the registration form, waiting out AuthRateLimitFilter if the suite has tripped it.
+ *
+ * Exactly why submitSignIn exists, for the register limit (10/minute per IP) instead of the login
+ * one. Almost every spec creates its accounts through createCustomer, which already backs off; the
+ * spec *about* the register form has to drive the form itself, so it had no backoff at all. Late in
+ * a run the form then answers "Please try again later" and an assertion about the form's real
+ * behaviour fails on a throughput ceiling — which is what happened to the Back/Forward test: it saw
+ * the rate-limit alert, not a broken application.
+ *
+ * Keyed on the 429 itself rather than on page text, so a legitimate error message can never be
+ * misread as a rate limit. `submit` lets a caller supply its own click sequence — the
+ * double-submission test needs its three rapid clicks to stay three rapid clicks — and defaults to
+ * one click on the button.
+ *
+ * Only for submissions that reach the network. A form the client rejects on its own never produces
+ * a response, so this would sit out the full waitForResponse timeout before returning null; those
+ * call sites click the button directly.
+ */
+const submitRegistration = async (page, { submit, attempts = 2 } = {}) => {
+  const click = submit || (() => page.locator(".signin-submit").click());
+  for (let attempt = 1; ; attempt += 1) {
+    const [response] = await Promise.all([
+      page.waitForResponse((res) => /\/auth\/register$/.test(res.url()), { timeout: 20_000 })
+        .catch(() => null),
+      click(),
+    ]);
+    if (response?.status() !== 429 || attempt >= attempts) return response;
+    // One window, once. A second wait would exceed the 150s test timeout — see playwright.config.js.
+    await page.waitForTimeout(61_000);
+  }
+};
+
 /** Fills the checkout's new-address form, leaving pincode to the caller. */
 const fillCheckoutAddress = async (page, { pincode, country = "India" } = {}) => {
   await page.getByPlaceholder("Recipient name").fill("E2E Buyer");
@@ -68,4 +101,6 @@ const signInAsNewAdmin = async (page, label) => {
   return account;
 };
 
-module.exports = { fillCheckoutAddress, signInAsNewAdmin, signInAsNewCustomer, submitSignIn };
+module.exports = {
+  fillCheckoutAddress, signInAsNewAdmin, signInAsNewCustomer, submitRegistration, submitSignIn,
+};
