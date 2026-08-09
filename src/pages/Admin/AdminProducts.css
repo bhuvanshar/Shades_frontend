@@ -4,3 +4,58 @@
 .admin-modal-backdrop{position:fixed;inset:0;z-index:500;display:grid;place-items:center;padding:30px;background:rgba(16,18,15,.62);backdrop-filter:blur(3px)}.admin-product-modal{width:min(760px,100%);max-height:90vh;overflow:auto;padding:28px;border-radius:7px;background:#f8f7f3;box-shadow:0 28px 80px rgba(0,0,0,.25)}.manage-modal{width:min(1100px,100%)}.modal-heading{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:1px solid #dedbd3}.modal-heading span{color:#8b6b43;text-transform:uppercase;letter-spacing:1.5px;font-size:9px}.modal-heading h2{margin-top:6px;font:400 30px Georgia,serif}.modal-heading>button{border:0;background:none;font-size:28px;color:#777}.product-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:24px 0}.product-form-grid label{display:grid;gap:7px;color:#555;font-size:11px;font-weight:600}.product-form-grid .wide,.product-form-grid fieldset.wide{grid-column:1/-1}.product-form-grid fieldset{padding:15px;border:1px solid #d8d6cf}.product-form-grid legend{padding:0 6px;font-size:11px}.category-checks{display:flex;flex-wrap:wrap;gap:14px}.category-checks label{display:flex;align-items:center;gap:5px;font-weight:400}.category-checks input{width:auto}.modal-actions{display:flex;justify-content:flex-end;gap:9px;padding-top:18px;border-top:1px solid #dedbd3}.modal-actions button{padding:12px 18px;border:1px solid #d2d0c9;background:#fff;border-radius:3px}.manage-columns{display:grid;grid-template-columns:1fr 1fr;gap:28px;padding-top:24px}.manage-columns h3{margin-bottom:15px;font:400 20px Georgia,serif}.variant-list{display:grid;gap:8px;margin-bottom:18px}.variant-item{padding:12px;border:1px solid #ddd;background:#fff}.variant-item>div:first-child{margin-bottom:10px}.variant-item small{display:block;margin-top:4px;color:#888;font-size:10px}.stock-adjust{display:flex;gap:6px}.stock-adjust input{width:72px;padding:7px;border:1px solid #ddd}.mini-form{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:15px;border:1px solid #ddd;background:#fff}.mini-form h4,.mini-form .wide{grid-column:1/-1}.mini-form h4{font-size:12px}.mini-form label{display:flex;align-items:center;gap:5px;font-size:10px}.mini-form label input{width:auto}.admin-image-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px}.admin-image-grid>div{position:relative;aspect-ratio:1;background:#eee;overflow:hidden}.admin-image-grid img{width:100%;height:100%;object-fit:cover}.admin-image-grid button{position:absolute;right:4px;bottom:4px}.admin-image-grid span{position:absolute;left:4px;top:4px;padding:4px;background:#20251f;color:#fff;font-size:8px}
 @media(max-width:1050px){.product-admin-row{grid-template-columns:58px 1.5fr repeat(2,.6fr) 72px 1fr}.product-admin-row>div:nth-child(5){display:none}}@media(max-width:820px){.product-admin-stats{grid-template-columns:1fr 1fr}.product-filters{grid-template-columns:1fr}.product-admin-row{grid-template-columns:50px 1fr 70px}.product-admin-row>div:nth-child(n+3):nth-child(-n+5),.product-admin-row>.product-state{display:none}.product-row-actions{grid-column:1/-1;justify-content:flex-start}.manage-columns,.product-form-grid{grid-template-columns:1fr}.admin-modal-backdrop{padding:10px}.product-form-grid .wide{grid-column:auto}.manage-columns{gap:20px}}
 .product-create-modal{width:min(980px,100%)}.photo-inputs{display:grid;grid-template-columns:1fr 1fr;gap:10px}.draft-variants{display:grid;gap:12px;margin:8px 0 14px}.draft-variant{padding:15px;border:1px solid #d8d2c8;border-radius:5px;background:#fff}.draft-variant-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.draft-variant-head button,.add-variant-button{border:1px solid #cbc5bb;border-radius:3px;background:#fff;padding:8px 11px}.draft-variant-head button{color:#9a3d32}.variant-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}.variant-fields .wide{grid-column:1/-1}.mini-form select{width:100%;padding:12px;border:1px solid #d8d6cf;background:#fff}.admin-image-grid small{position:absolute;left:4px;bottom:4px;padding:3px;background:#fff;color:#333;font-size:8px}@media(max-width:820px){.variant-fields,.photo-inputs{grid-template-columns:1fr}.variant-fields .wide{grid-column:auto}}
+
+/* ── Image editor ─────────────────────────────────────────────────────────────────────────
+   Replaced .admin-image-grid, which was a tile with a Remove button overlaid on the photo.
+   Reordering, choosing the primary and editing alt text all need a visible label and a real
+   hit target, so each image is now a row with its controls beside it rather than on top of it.
+   A list, and an ordered one, because the order is the meaning here. */
+.image-count { margin-bottom: 10px; color: #888; font-size: 10px; }
+
+.admin-image-editor { display: grid; gap: 8px; margin: 0 0 18px; padding: 0; list-style: none; }
+
+.admin-image-editor li {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  background: #fff;
+}
+
+/* The primary image is the one every listing thumbnail shows, so it is marked in the list
+   rather than only inside its own row. */
+.admin-image-editor li.is-primary { border-color: #8b6b43; }
+.admin-image-editor img { width: 74px; height: 74px; object-fit: cover; background: #eee; }
+/* min-width:0 is load-bearing: a grid item's automatic minimum size is its min-content width, so a
+   long alt text or filename would push this column wider than the dialog and scroll the whole modal
+   sideways — the same overflow the admin coupon list hit with long codes. */
+.admin-image-meta { display: grid; gap: 5px; min-width: 0; }
+.admin-image-position { font-size: 11px; font-weight: 600; color: #555; }
+.admin-image-position em { margin-left: 6px; padding: 2px 5px; background: #20251f; color: #fff; font-size: 8px; font-style: normal; letter-spacing: .5px; }
+.admin-image-meta small { color: #92938e; font-size: 10px; }
+.admin-image-meta input { width: 100%; padding: 6px; border: 1px solid #ddd; font-size: 11px; }
+
+.admin-image-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.admin-image-actions button { padding: 6px 9px; border: 1px solid #d5d3cc; background: #fff; border-radius: 3px; font-size: 10px; }
+.admin-image-actions .danger { color: #9a3d32; }
+.admin-image-actions button:disabled { opacity: .45; cursor: default; }
+
+.upload-progress { grid-column: 1/-1; margin: 0; color: #8b6b43; font-size: 11px; }
+
+@media (max-width: 820px) {
+  .admin-image-editor li { grid-template-columns: 56px 1fr; }
+  .admin-image-editor img { width: 56px; height: 56px; }
+}
+
+/* "Shown for every colour" / "Only Blue". Sits where the read-only caption used to, so the row
+   keeps its height and the control reads as a property of the photo rather than an action on it. */
+.admin-image-scope {
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid #ddd;
+  background: #fff;
+  font: inherit;
+  font-size: 10px;
+  color: #555;
+}

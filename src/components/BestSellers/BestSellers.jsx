@@ -119,7 +119,7 @@ export default function BestSellers({ limit = 20 }) {
         {status === "ready" && (
           <div className="best-sellers-row">
             {visible.map((item) => (
-              <ProductCard key={item._id} id={item._id} name={item.name} price={item.price}
+              <ProductCard key={item._id} id={item._id} slug={item.slug} name={item.name} price={item.price}
                 variantPrice={item.defaultVariantPrice} priceFrom={item.priceFrom}
                 image={item.defaultVariantImage || item.image} color={item.color} isNew={item.isNew}
                 variantId={item.defaultVariantId} stock={item.defaultVariantStock} available={item.available} />

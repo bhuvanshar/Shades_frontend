@@ -1,10 +1,10 @@
 import React, { useContext, useState } from "react";
 import "./ProductCard.css";
 import { Link, useNavigate } from "react-router-dom";
-import { StoreContext, listingPrice } from "../../context/StoreContext";
+import { StoreContext, listingPrice, productPath } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 
-const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, isNew, variantId, stock, available = true }) => {
+const ProductCard = ({ id, slug, name, price, variantPrice, priceFrom, image, color, isNew, variantId, stock, available = true }) => {
   const { cartItems, addToCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -31,7 +31,7 @@ const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, i
   return (
     <div className="product-card">
       <button className={`wishlist-heart ${saved ? "saved" : ""}`} onClick={save} aria-label={saved ? `Remove ${name} from wishlist` : `Add ${name} to wishlist`}>{saved ? "♥" : "♡"}</button>
-      <Link to={`/product/${id}`} className="product-card-link">
+      <Link to={productPath({ slug, productId: id })} className="product-card-link">
         <div className="product-card-image">
           <img src={image} alt={name} />
           {isNew && <span className="new-badge">New</span>}
@@ -39,7 +39,7 @@ const ProductCard = ({ id, name, price, variantPrice, priceFrom, image, color, i
       </Link>
 
       <div className="product-card-info">
-        <Link to={`/product/${id}`}>
+        <Link to={productPath({ slug, productId: id })}>
           <p className="product-name">{name}</p>
         </Link>
         {color && <p className="product-color">{color}</p>}

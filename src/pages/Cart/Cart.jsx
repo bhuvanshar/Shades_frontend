@@ -1,6 +1,6 @@
 import React, { useContext, useState } from "react";
 import "./Cart.css";
-import { StoreContext, resolveCartLines } from "../../context/StoreContext";
+import { StoreContext, resolveCartLines, productPath } from "../../context/StoreContext";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { validateCoupon } from "../../services/api";
@@ -74,9 +74,9 @@ const Cart = () => {
         <div className="cart-layout">
           <div className="cart-items">{lines.map((line) => (line.resolved ? (
             <div className="cart-item" key={line.key}>
-              <Link to={`/product/${line.productId}`} className="cart-item-image"><img src={line.image} alt={line.product.name} /></Link>
+              <Link to={productPath(line.product || { productId: line.productId })} className="cart-item-image"><img src={line.image} alt={line.product.name} /></Link>
               <div className="cart-item-info">
-                <Link to={`/product/${line.productId}`}><p className="cart-item-name">{line.product.name}</p></Link>
+                <Link to={productPath(line.product)}><p className="cart-item-name">{line.product.name}</p></Link>
                 <p className="cart-item-color">{line.color}{line.variant?.sku && ` · ${line.variant.sku}`}</p>
                 <p className="cart-item-price">{money(line.price)}</p>
                 {/* Only worth saying when the offer actually excludes something. On an
@@ -106,7 +106,7 @@ const Cart = () => {
             <div className="cart-item cart-item-unavailable" key={line.key}>
               <span className="cart-item-image cart-item-image-missing" aria-hidden="true">SW</span>
               <div className="cart-item-info">
-                <p className="cart-item-name">{line.product ? <Link to={`/product/${line.productId}`}>{line.title}</Link> : line.title}</p>
+                <p className="cart-item-name">{line.product ? <Link to={productPath(line.product)}>{line.title}</Link> : line.title}</p>
                 <p className="cart-item-color">{line.unavailableReason}{line.variantId ? ` · ref ${line.variantId}` : ""}</p>
                 <p className="cart-item-price">Price unavailable</p>
               </div>

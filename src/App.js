@@ -84,7 +84,11 @@ const App = () => {
           <Route path="/collections/:collection" element={<Collections />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/order" element={<ProtectedRoute><PlaceOrder /></ProtectedRoute>} />
-          <Route path="/product/:id" element={<ProductDetail />} />
+          {/* One route for both forms. A numeric segment is a legacy /product/{PRODUCT_ID} link
+              and ProductDetail redirects it to the canonical slug; anything else is a slug. Kept
+              as one route rather than two because react-router matches both patterns identically
+              and a second route would only decide which component runs the same redirect. */}
+          <Route path="/product/:slug" element={<ProductDetail />} />
           <Route path="/my-orders" element={<ProtectedRoute><MyOrders /></ProtectedRoute>} />
           <Route path="/wishlist" element={<ProtectedRoute><Wishlist /></ProtectedRoute>} />
           <Route path="/account" element={<ProtectedRoute customerOnly><Account /></ProtectedRoute>} />

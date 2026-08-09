@@ -53,7 +53,10 @@ test("a freshly published product carries the badge, and an old one does not", a
   // And the badge is the same on every surface, because they all read the same server value.
   await page.goto(`/product/${fresh.productId}`);
   await page.waitForLoadState("networkidle");
-  expect(await badgeOn(page, ".pd-main-image"), "product detail").toBe(true);
+  // .pg-frame, not .pd-main-image: the product page's ad-hoc image block was replaced by the
+  // ProductGallery component, which renders the badge inside its own frame. The badge itself is
+  // unchanged — still .pd-badge, still driven by the server's isNew.
+  expect(await badgeOn(page, ".pg-frame"), "product detail").toBe(true);
 
   for (const route of [`/shop?q=${encodeURIComponent(fresh.name)}`, `/?q=${encodeURIComponent(fresh.name)}`]) {
     await page.goto(route);

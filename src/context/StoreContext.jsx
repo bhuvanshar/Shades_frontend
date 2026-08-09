@@ -50,12 +50,87 @@ export const selectDefaultVariant = (variants, requestedVariantId) => {
   return requested || eligible[0] || null;
 };
 
-/** The photo that belongs to a variant, falling back to the product's own primary/general shot. */
-export const imageForVariant = (product, variant) => (variant
-  && product?.images?.find((image) => String(image.variantId) === String(variant.variantId)))
-  || product?.images?.find((image) => image.isPrimary)
-  || product?.images?.find((image) => !image.variantId)
-  || product?.images?.[0];
+/**
+ * The photos to show for a variant, best first. The one rule every photo surface uses — the
+ * product gallery, the listing card, the variant tiles — so they cannot disagree about which
+ * colourway a customer is looking at.
+ *
+ * Order:
+ *   1. the variant's own photos, then the general product photos,
+ *   2. general product photos alone, when the variant has none of its own,
+ *   3. photos belonging to some OTHER PURCHASABLE variant,
+ *   4. anything left.
+ *
+ * Step 1 briefly returned the variant's own photos and nothing else, to stop ODU's general shot —
+ * which is a photograph of the sold-out Black pair — appearing among Blue's additional pictures.
+ * That was the wrong cut. It hid every genuinely product-wide photo: measured across the live
+ * catalogue, five of six products dropped from 2-3 stored photos to ONE visible, because each was
+ * authored as "one photo per colourway plus one general".
+ *
+ * A general photo IS product-wide, and belongs in every colourway's gallery. ODU's problem is that
+ * a colourway-specific photo was FILED as general — a data problem, not a rule problem. The fix for
+ * it is the "Shown for" control in the admin image editor, which moves that photo onto Ocean Black
+ * where it belongs; it then stops appearing under Blue, without hiding anything from anyone else.
+ *
+ * Step 3 is the fix for a reported bug and the reason this is not a one-liner. Every fallback used
+ * to end at "the primary image, else the first image", none of which asks whether the variant that
+ * owns that photo can actually be bought. A product whose only photography belonged to a sold-out
+ * colourway therefore showed that colourway everywhere while quoting, labelling and selling a
+ * different one: the page said "Add Orange to bag" beside two photographs of Blue, and the Shop
+ * card did the same. Preferring a purchasable variant's photography means the customer sees
+ * something they can buy.
+ *
+ * Step 4 still exists, and is reached only when NOTHING is purchasable. A fully sold-out product
+ * has no in-stock colourway to borrow from, and showing its photographs is better than showing an
+ * empty frame — it is not misleading there, because nothing on the page is for sale either.
+ */
+export const galleryFor = (product, variant) => {
+  const images = product?.images || [];
+  if (!images.length) return [];
+  const sameVariant = (image, candidate) => candidate != null
+    && image.variantId != null
+    && String(image.variantId) === String(candidate);
+
+  const own = variant ? images.filter((image) => sameVariant(image, variant.variantId)) : [];
+  const general = images.filter((image) => image.variantId == null);
+  if (own.length) return [...own, ...general];
+  if (general.length) return general;
+
+  // Borrowed photography. Ordered by the shared variant order so the choice is deterministic
+  // rather than "whichever image row came back first".
+  const buyable = purchasableVariants(product?.variants)
+    .filter((candidate) => String(candidate.variantId) !== String(variant?.variantId));
+  const borrowed = buyable.flatMap((candidate) => images.filter((image) => sameVariant(image, candidate.variantId)));
+  if (borrowed.length) return borrowed;
+
+  return images;
+};
+
+/** The single photo that best represents a variant. Same rule as the gallery, first frame only. */
+export const imageForVariant = (product, variant) => galleryFor(product, variant)[0];
+
+/**
+ * True when the photo shown for `variant` is not actually a photo of it — either a general product
+ * shot or another colourway's. Surfaces use this to say so rather than letting the customer assume
+ * the picture is the thing they are buying.
+ */
+export const isBorrowedImage = (product, variant, image) => Boolean(image)
+  && image.variantId != null
+  && String(image.variantId) !== String(variant?.variantId);
+
+/**
+ * The storefront address of a product. Every link to a product page must be built with this and
+ * nothing else — a second way to construct the URL is how one surface ends up still emitting
+ * /product/22 after the rest moved to slugs.
+ *
+ * Accepts anything carrying a slug: a mapped product, a wishlist item, a cart line's product. The
+ * numeric fallback exists only for a payload that predates the slug field; it still resolves,
+ * because /product/:slug detects a numeric segment and redirects to the canonical URL.
+ */
+export const productPath = (product) => {
+  const slug = product?.slug;
+  return `/product/${slug || product?.productId || product?._id}`;
+};
 
 // Exported so any surface rendering a product card — the discovery grid, Best Sellers — derives
 // its price, default variant, stock and New badge from the same mapping. A second mapper is how
@@ -70,15 +145,18 @@ export const mapProduct = (product) => {
   const firstVariant = selectDefaultVariant(variants) || variants[0];
   const prices = variants.map((variant) => Number(variant.price)).filter(Number.isFinite);
   const lowestPrice = prices.length ? Math.min(...prices) : Number(product.basePrice);
-  const primaryImage = product.images?.find((image) => image.isPrimary)
-    || product.images?.find((image) => !image.variantId)
-    || product.images?.[0];
+  // The card's photo is chosen for the variant the card actually sells, through the shared rule.
+  // It used to be "isPrimary, else the first non-variant image, else images[0]", which ignored
+  // whether that photo's colourway was purchasable — so a card reading "Orange / Add Orange to bag"
+  // could carry a photograph of a sold-out Blue.
+  const primaryImage = galleryFor(product, firstVariant)[0];
   const defaultVariantImage = firstVariant
     && product.images?.find((image) => String(image.variantId) === String(firstVariant.variantId));
   const defaultVariantPrice = finiteOrNull(firstVariant?.price);
   return {
     _id: String(product.productId),
     productId: product.productId,
+    slug: product.slug,
     name: product.productName,
     brand: product.brand,
     description: product.productDescription || "",

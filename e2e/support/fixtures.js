@@ -71,6 +71,9 @@ const createProduct = async ({ name, categoryName = "Men", variants }) => {
   const full = await account.client.get(`/products/${created.productId}`);
   return {
     productId: full.productId,
+    // The public identifier. Every storefront URL in these specs must be built from this — using
+    // productId would assert the very thing the slug change removed.
+    slug: full.slug,
     name: full.productName,
     variants: full.variants.map((variant) => ({
       variantId: variant.variantId, sku: variant.sku, variantName: variant.variantName,
@@ -78,6 +81,122 @@ const createProduct = async ({ name, categoryName = "Men", variants }) => {
     })),
   };
 };
+
+/**
+ * A real 2x2 PNG, written to disk so it can be handed to a file input or a multipart upload.
+ *
+ * Deliberately a genuine PNG rather than bytes with a .png name: the backend decodes every upload
+ * and compares the real format against the declared Content-Type, so a fake would be rejected —
+ * which is exactly what disguisedFile() below relies on.
+ */
+/**
+ * A real 1x1 PNG in a colour of our choosing, built here rather than pasted as a constant.
+ *
+ * Distinct bytes per call is now a requirement, not a nicety: the upload endpoint refuses a
+ * photograph a product already holds (that duplicate is the root cause of the out-of-stock colour
+ * appearing in every gallery). A single shared PNG constant made every fixture image byte-identical,
+ * so the second upload to any product would be correctly rejected and the suite would fail for a
+ * reason that has nothing to do with what it is testing.
+ *
+ * Encoded properly — IHDR/IDAT/IEND with real CRCs — because the backend decodes every upload and
+ * checks the decoded format against the declared Content-Type. Appending junk to a fixed PNG would
+ * be simpler and would stop being a valid test of that check.
+ */
+const zlib = require("zlib");
+
+const CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c;
+  }
+  return table;
+})();
+
+const crc32 = (buffer) => {
+  let c = 0xffffffff;
+  for (const byte of buffer) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+const pngChunk = (type, data) => {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const typed = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(typed));
+  return Buffer.concat([length, typed, crc]);
+};
+
+let pngCounter = 0;
+
+/** A 1x1 RGB PNG whose colour is unique to this call. */
+const pngBytes = () => {
+  pngCounter += 1;
+  const red = pngCounter & 0xff;
+  const green = (pngCounter >> 8) & 0xff;
+  const blue = (pngCounter >> 16) & 0xff;
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(1, 0);        // width
+  header.writeUInt32BE(1, 4);        // height
+  header[8] = 8;                     // bit depth
+  header[9] = 2;                     // colour type: truecolour RGB
+  // 10..12 are compression, filter and interlace, all 0.
+  const raw = Buffer.from([0, red, green, blue]); // one scanline: filter byte 0, then the pixel
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", zlib.deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+};
+
+const imageFile = (name = "photo.png") => {
+  const fs = require("fs");
+  const path = require("path");
+  const directory = fs.mkdtempSync(path.join(require("os").tmpdir(), "e2e-images-"));
+  const file = path.join(directory, name);
+  fs.writeFileSync(file, pngBytes());
+  return file;
+};
+
+/** An HTML document named .png — the "script disguised as an image" case §10 asks about. */
+const disguisedFile = (name = "evil.png") => {
+  const fs = require("fs");
+  const path = require("path");
+  const directory = fs.mkdtempSync(path.join(require("os").tmpdir(), "e2e-images-"));
+  const file = path.join(directory, name);
+  fs.writeFileSync(file, "<html><script>alert(1)</script></html>");
+  return file;
+};
+
+/**
+ * Uploads an image through the real multipart endpoint as the admin.
+ *
+ * Uses undici's FormData/Blob rather than the ApiClient's JSON path, because the endpoint this is
+ * exercising only accepts multipart/form-data — sending JSON here would test a different route.
+ */
+const uploadImage = async ({ productId, variantId = null, altText = "", displayOrder = 0, isPrimary = false,
+  file = null, contentType = "image/png" }) => {
+  const account = await admin();
+  const fs = require("fs");
+  const form = new FormData();
+  const bytes = file ? fs.readFileSync(file) : pngBytes();
+  form.append("file", new Blob([bytes], { type: contentType }), file ? require("path").basename(file) : "photo.png");
+  form.append("altText", altText);
+  form.append("displayOrder", String(displayOrder));
+  form.append("isPrimary", String(isPrimary));
+  if (variantId != null) form.append("variantId", String(variantId));
+  return account.client.multipart(`/products/${productId}/images/upload`, form);
+};
+
+/** One product's images straight from the database, in the order the gallery must render them. */
+const imageRowsOf = (productId) =>
+  sql(`SELECT CONCAT(IMAGE_ID,':',DISPLAY_ORDER,':',IS_PRIMARY,':',COALESCE(VARIANT_ID,'-'),':',COALESCE(ALT_TEXT,''))
+       FROM PRODUCT_IMAGES WHERE PRODUCT_ID=${Number(productId)}
+       ORDER BY IS_PRIMARY DESC, DISPLAY_ORDER, IMAGE_ID`)
+    .split("\n").map((row) => row.trim()).filter(Boolean);
 
 /** Stock straight from the database — the authority the UI is being checked against. */
 const stockOf = (variantId) => Number(sqlValue(`SELECT QUANTITY_AVAILABLE FROM PRODUCT_VARIANTS WHERE VARIANT_ID=${Number(variantId)}`));
@@ -197,6 +316,7 @@ const lineDiscountsOf = (orderId) =>
 
 module.exports = {
   admin, createProduct, markDelivered, movementsForOrder, orderStatus, stockOf,
+  disguisedFile, imageFile, imageRowsOf, uploadImage,
   automaticOfferRow, clearAutomaticOffers, createAutomaticOffer, lineDiscountsOf,
   offerSnapshotOf, withAutomaticOffer,
 };

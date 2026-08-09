@@ -1,22 +1,92 @@
 import React, { useContext, useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import "./ProductDetail.css";
-import { StoreContext, imageForVariant, selectDefaultVariant, variantLabel } from "../../context/StoreContext";
+import { StoreContext, galleryFor, imageForVariant, isBorrowedImage, mapProduct, productPath, selectDefaultVariant, variantLabel } from "../../context/StoreContext";
 import ProductReviews from "../../components/ProductReviews/ProductReviews";
+import ProductGallery from "../../components/ProductGallery/ProductGallery";
+import { getProductBySlug, getCanonicalProductSlug } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 
+/** A path segment that is only digits is a legacy /product/{PRODUCT_ID} link, not a slug. */
+const isLegacyNumericId = (segment) => /^\d+$/.test(segment || "");
+
 export default function ProductDetail() {
-  const { id } = useParams();
-  const { product_list, productsLoading, cartItems, addToCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
+  const { slug } = useParams();
+  const { product_list, cartItems, addToCart, isWishlisted, toggleWishlist } = useContext(StoreContext);
   const { user } = useAuth();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const product = product_list.find((item) => item._id === id);
+  // The product now comes from the server, addressed by the slug in the URL.
+  //
+  // It used to be `product_list.find((item) => item._id === id)` — a lookup in the storefront's
+  // cached listing, which is fetched as `?size=200`. Any product outside that first page therefore
+  // rendered "Product not found" on a direct hit, refresh or shared link, while working perfectly
+  // if you arrived by clicking a card. Measured against the 1,182-product test catalogue, that was
+  // most of the shop. Fetching the one product in the URL removes the dependency on the listing
+  // entirely, which is also what makes refresh and Back/Forward correct.
+  const [product, setProduct] = useState(null);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("description");
   const [selectedVariantId, setSelectedVariantId] = useState(null);
-  const [activeImage, setActiveImage] = useState("");
   const [wishlistError, setWishlistError] = useState("");
   const requestedVariantId = params.get("variant");
+
+  useEffect(() => {
+    let active = true;
+    setProductsLoading(true);
+
+    // A legacy numeric link is redirected to the canonical slug rather than rendered. `replace`,
+    // so Back returns to wherever the customer came from instead of bouncing them through the old
+    // URL again — and so the numeric form never becomes the page's canonical address.
+    if (isLegacyNumericId(slug)) {
+      getCanonicalProductSlug(slug)
+        .then((response) => {
+          if (!active) return;
+          if (response?.slug) navigate(`/product/${response.slug}${window.location.search}`, { replace: true });
+          else { setProduct(null); setProductsLoading(false); }
+        })
+        .catch(() => { if (active) { setProduct(null); setProductsLoading(false); } });
+      return () => { active = false; };
+    }
+
+    getProductBySlug(slug)
+      .then((response) => { if (active) { setProduct(mapProduct(response)); setProductsLoading(false); } })
+      .catch(() => { if (active) { setProduct(null); setProductsLoading(false); } });
+    return () => { active = false; };
+  }, [slug, navigate]);
+
+  const id = product ? String(product.productId) : null;
+
+  /**
+   * Canonical URL and social metadata, pointed at the slug.
+   *
+   * Written straight into document.head rather than through a helper library, because the project
+   * has no metadata layer and adding one for three tags would be a larger change than the tags.
+   * Kept in sync on every product change and left in place on unmount — a stale canonical is only
+   * read by a crawler on a product page, and every product page sets it before paint.
+   */
+  useEffect(() => {
+    if (!product?.slug) return;
+    const url = `${window.location.origin}${process.env.PUBLIC_URL || ""}/product/${product.slug}`;
+    const upsert = (selector, create) => {
+      let element = document.head.querySelector(selector);
+      if (!element) { element = create(); document.head.appendChild(element); }
+      return element;
+    };
+    const canonical = upsert('link[rel="canonical"]', () => {
+      const link = document.createElement("link"); link.rel = "canonical"; return link;
+    });
+    canonical.href = url;
+    const ogUrl = upsert('meta[property="og:url"]', () => {
+      const meta = document.createElement("meta"); meta.setAttribute("property", "og:url"); return meta;
+    });
+    ogUrl.setAttribute("content", url);
+    const ogTitle = upsert('meta[property="og:title"]', () => {
+      const meta = document.createElement("meta"); meta.setAttribute("property", "og:title"); return meta;
+    });
+    ogTitle.setAttribute("content", product.name);
+    document.title = `${product.name} · Shades World`;
+  }, [product]);
 
   // The variant this URL resolves to, by the one shared rule. An in-stock ?variant= wins; an
   // unknown, inactive or out-of-stock one falls back to the first purchasable variant; null means
@@ -28,13 +98,26 @@ export default function ProductDetail() {
 
   useEffect(() => {
     if (!product) return;
-    // variants[0] only when nothing is purchasable: the sold-out page still has to name a colour.
-    const initial = resolvedVariant || product.variants?.[0] || null;
-    setSelectedVariantId(initial?.variantId ?? null);
-    // The hero photo follows the SELECTED variant, not the product's primary image. It used to
-    // lead with isPrimary, so a product whose primary shot belonged to a sold-out colourway
-    // opened showing that colourway while quoting the price, SKU and stock of a different one.
-    setActiveImage(imageForVariant(product, initial)?.imageUrl || product.image || "");
+    // Initialises the selection, and REPAIRS it when the product changes — but never overwrites a
+    // selection that is still valid.
+    //
+    // This used to assign unconditionally on [product, resolvedVariant]. Because resolvedVariant is
+    // recomputed whenever the product object changes identity, any re-render that produced a fresh
+    // product — a refetch, or simply this page's own load settling after the customer had already
+    // clicked — silently threw the chosen colourway away and reverted to the default. It showed up
+    // as a colour tile that "un-clicked" itself, and as three intermittently failing tests here.
+    setSelectedVariantId((current) => {
+      const stillValid = current != null && product.variants?.some((variant) => variant.variantId === current);
+      if (stillValid) return current;
+      // variants[0] only when nothing is purchasable: the sold-out page still has to name a colour.
+      return (resolvedVariant || product.variants?.[0] || null)?.variantId ?? null;
+    });
+    // Which photo shows is now the gallery's own state, keyed off the image list it is handed.
+    // The list leads with the SELECTED variant's photos, so the page still opens on the colourway
+    // it is quoting — the property that mattered when this set an explicit hero image, and the
+    // reason it did not simply lead with isPrimary: a product whose primary shot belonged to a
+    // sold-out colourway used to open showing that colourway while quoting a different one's
+    // price, SKU and stock.
   }, [product, resolvedVariant]);
 
   // The primary photo is a view of the product, not a purchasable option: it only
@@ -43,21 +126,29 @@ export default function ProductDetail() {
   // rule rather than to whichever variant happens to be first.
   const selectedVariant = product?.variants?.find((variant) => variant.variantId === selectedVariantId)
     || resolvedVariant || product?.variants?.[0];
-  const mainImage = product?.images?.find((image) => image.isPrimary)
-    || product?.images?.find((image) => !image.variantId) || product?.images?.[0];
-  const viewingMain = activeImage === (mainImage?.imageUrl || product?.image);
   // variantLabel is shared with the listing, the wishlist and the bag — see StoreContext.
-  const hasVariantPhotos = Boolean(product?.images?.some((image) => image.variantId));
-  const gallery = useMemo(() => {
-    if (!product) return [];
-    const variantImages = product.images.filter((image) => image.variantId === selectedVariant?.variantId);
-    const generalImages = product.images.filter((image) => !image.variantId);
-    return variantImages.length ? [...variantImages, ...generalImages] : generalImages.length ? generalImages : product.images;
-  }, [product, selectedVariant]);
+  /**
+   * The gallery for the selected colourway: that variant's photos first, then the general product
+   * photos, so a customer looking at Blue sees Blue before the shared studio shots.
+   *
+   * Falls back to the general photos when the variant has none of its own, and to everything the
+   * product has when it has no general photos either — a product whose every image belongs to some
+   * variant must still show a gallery rather than an empty frame.
+   *
+   * Ids are compared as strings: variantId arrives as a number on the image and on the variant, but
+   * the ?variant= round trip makes the selected one a string, and === across those silently matched
+   * nothing.
+   */
+  const gallery = useMemo(() => galleryFor(product, selectedVariant), [product, selectedVariant]);
+  // True when the gallery is showing another colourway's photography because this one has none.
+  // Said out loud below rather than left for the customer to misread as the thing they are buying.
+  const borrowedPhotos = Boolean(gallery.length) && isBorrowedImage(product, selectedVariant, gallery[0]);
   const chooseVariant = (variant) => {
     setSelectedVariantId(variant.variantId);
-    const image = product.images.find((item) => item.variantId === variant.variantId) || mainImage;
-    setActiveImage(image?.imageUrl || product.image);
+    // No explicit image is set here any more: changing the variant changes the gallery's list,
+    // and the gallery resets to that list's first photo. Selecting a colour therefore shows that
+    // colour, while clicking a thumbnail changes only the photo — a gallery click must never
+    // silently re-target what Add to Bag will buy.
     // Reflect the choice in the URL so a refresh, a share or Back/Forward lands on the same
     // colourway. `replace` because a colour swatch is not a navigation step — pushing would make
     // Back walk the customer through their own clicks instead of leaving the product page.
@@ -71,7 +162,6 @@ export default function ProductDetail() {
       setParams(next, { replace: true });
     }
   };
-  const showMainProduct = () => setActiveImage(mainImage?.imageUrl || product.image);
 
   if (productsLoading) return <div className="container pd-message">Loading product…</div>;
   if (!product) return <div className="container pd-message"><h2>Product not found</h2><Link to="/" className="back-link">← Back to shop</Link></div>;
@@ -133,8 +223,11 @@ export default function ProductDetail() {
       : `Free shipping on orders of ₹500 or more; add ₹${(500 - unitPrice).toLocaleString("en-IN")} more to qualify.`,
   };
 
-  return <div className="product-detail"><div className="container"><Link to="/" className="back-link">← Back to shop</Link><div className="pd-layout"><div className="pd-image-section"><div className="pd-main-image">{activeImage ? <img src={activeImage} alt={product.imageAlt || product.name} /> : <div className="pd-image-placeholder">SHADES WORLD</div>}{product.isNew && <span className="pd-badge">New</span>}</div>{hasVariantPhotos && <button type="button" className="pd-photo-toggle" disabled={viewingMain} onClick={showMainProduct}>{product.image && <img src={product.image} alt="" />}<span>{viewingMain ? "Showing the primary photo" : "View the primary photo"}</span></button>}{gallery.length > 1 && <div className="pd-gallery">{gallery.map((image) => <button key={image.imageId} className={activeImage === image.imageUrl ? "active" : ""} onClick={() => setActiveImage(image.imageUrl)}><img src={image.imageUrl} alt={image.altText || product.name} /></button>)}</div>}</div><div className="pd-info-section"><span className="pd-category">{product.categories.map((category) => category.categoryName).join(" · ") || product.category}</span><h1 className="pd-title">{product.name}</h1><p className="pd-brand">{product.brand}</p><p className="pd-price">₹{Number(selectedVariant?.price ?? product.price).toLocaleString("en-IN")}</p>
-    {product.variants.length > 0 && <div className="pd-variants"><div className="pd-variant-label"><span>Choose color</span><strong>{color}</strong></div><div className="pd-variant-options">{product.variants.map((variant) => { const variantColor = variantLabel(variant); const variantImage = product.images.find((item) => item.variantId === variant.variantId); const image = variantImage || mainImage; const inBag = bagCount(variant); return <button key={variant.variantId} className={selectedVariant?.variantId === variant.variantId ? "active" : ""} onClick={() => chooseVariant(variant)} disabled={variant.quantityAvailable <= 0 && inBag === 0}>{image ? <img src={image.imageUrl} alt={`${product.name} ${variantColor}`} /> : <span className="pd-variant-no-image">No photo</span>}<span>{variantColor}</span>{ambiguous(variant) && <small>{variant.sku}</small>}{!variantImage && image && <small>Product photo</small>}{variant.quantityAvailable <= 0 && <small>Out of stock</small>}{inBag > 0 && <small className="pd-variant-in-bag">{inBag} in bag</small>}</button>; })}</div><p className={`pd-stock ${available <= (selectedVariant?.lowStockThreshold || 0) ? "low" : ""}`}>{available > 0 ? `${available} in stock · SKU ${selectedVariant.sku}` : "Currently unavailable"}</p></div>}
+  return <div className="product-detail"><div className="container"><Link to="/" className="back-link">← Back to shop</Link><div className="pd-layout"><div className="pd-image-section"><ProductGallery images={gallery} productName={product.name} badge={product.isNew ? <span className="pd-badge">New</span> : null} />{borrowedPhotos && <p className="pd-photo-note">These photos show another colourway — there are none for {color} yet.</p>}</div><div className="pd-info-section"><span className="pd-category">{product.categories.map((category) => category.categoryName).join(" · ") || product.category}</span><h1 className="pd-title">{product.name}</h1><p className="pd-brand">{product.brand}</p><p className="pd-price">₹{Number(selectedVariant?.price ?? product.price).toLocaleString("en-IN")}</p>
+    {product.variants.length > 0 && <div className="pd-variants"><div className="pd-variant-label"><span>Choose color</span><strong>{color}</strong></div><div className="pd-variant-options">{product.variants.map((variant) => { const variantColor = variantLabel(variant); const variantImage = product.images.find((item) => String(item.variantId) === String(variant.variantId)); const image = variantImage || imageForVariant(product, variant); const inBag = bagCount(variant); return <button key={variant.variantId} className={selectedVariant?.variantId === variant.variantId ? "active" : ""} onClick={() => chooseVariant(variant)} disabled={variant.quantityAvailable <= 0 && inBag === 0}>{image ? <img src={image.imageUrl} alt={`${product.name} ${variantColor}`} /> : <span className="pd-variant-no-image">No photo</span>}<span>{variantColor}</span>{ambiguous(variant) && <small>{variant.sku}</small>}{/* Says which kind of stand-in it is. This used to read "Product photo" for anything that was
+    not the variant's own shot — including another colourway's photograph, which is the one case
+    where the label actively misleads. */}
+{!variantImage && image && <small>{isBorrowedImage(product, variant, image) ? "Another colourway" : "Product photo"}</small>}{variant.quantityAvailable <= 0 && <small>Out of stock</small>}{inBag > 0 && <small className="pd-variant-in-bag">{inBag} in bag</small>}</button>; })}</div><p className={`pd-stock ${available <= (selectedVariant?.lowStockThreshold || 0) ? "low" : ""}`}>{available > 0 ? `${available} in stock · SKU ${selectedVariant.sku}` : "Currently unavailable"}</p></div>}
     <div className="pd-actions">
       <button className={`pd-wishlist-btn ${saved ? "saved" : ""}`} onClick={saveProduct}>{saved ? "♥ Saved to wishlist" : "♡ Save to wishlist"}</button>
       {/* No quantity stepper here by design: the bag is edited in the bag. With the stepper
@@ -169,6 +262,6 @@ export default function ProductDetail() {
       </div>}
     </div></div></div>
     <ProductReviews productId={id} />
-    {related.length > 0 && <div className="pd-related"><h2>You may also like</h2><div className="pd-related-grid">{related.map((item) => <Link to={`/product/${item._id}`} key={item._id} className="pd-related-card"><div className="pd-related-img"><img src={item.image} alt={item.name} /></div><p className="pd-related-name">{item.name}</p><p className="pd-related-price">₹{item.price.toLocaleString("en-IN")}</p></Link>)}</div></div>}
+    {related.length > 0 && <div className="pd-related"><h2>You may also like</h2><div className="pd-related-grid">{related.map((item) => <Link to={productPath(item)} key={item._id} className="pd-related-card"><div className="pd-related-img"><img src={item.image} alt={item.name} /></div><p className="pd-related-name">{item.name}</p><p className="pd-related-price">₹{item.price.toLocaleString("en-IN")}</p></Link>)}</div></div>}
   </div></div>;
 }

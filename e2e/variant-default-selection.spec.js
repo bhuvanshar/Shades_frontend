@@ -37,6 +37,12 @@ test.beforeAll(async () => {
   for (const [name, isPrimary] of [["Blue", true], ["Orange", false], ["Green", false]]) {
     await account.client.post(`/products/${product.productId}/images`, {
       imageUrl: `https://images.test/variants/${byName[name]}/${name.toLowerCase()}.jpg`,
+      // variantId is now stated, not inferred. PRODUCT_IMAGES gained a real VARIANT_ID column;
+      // before that, the association was recovered by matching "/variants/(\d+)/" against this
+      // URL, so a fixture could imply it just by naming the file that way. It cannot any more —
+      // which is the point of the change, and why this line is the fixture's own bug fix rather
+      // than an accommodation.
+      variantId: byName[name],
       altText: `${name} photo`, displayOrder: 0, isPrimary,
     });
   }
@@ -49,7 +55,11 @@ const shown = (page) => page.evaluate(() => ({
   stock: document.querySelector(".pd-stock")?.textContent,
   addButton: document.querySelector(".pd-add-btn")?.textContent,
   addDisabled: document.querySelector(".pd-add-btn")?.disabled,
-  hero: document.querySelector(".pd-main-image img")?.getAttribute("src"),
+  // .pg-frame, not .pd-main-image: the page's ad-hoc image block was replaced by the
+  // ProductGallery component. The rule this asserts is unchanged — the hero photo must depict the
+  // variant being quoted and sold — but it is now the gallery's first image rather than a
+  // separately-managed activeImage.
+  hero: document.querySelector(".pg-frame img")?.getAttribute("src"),
   activeTile: document.querySelector(".pd-variant-options button.active")?.innerText.replace(/\s+/g, " ").trim(),
 }));
 

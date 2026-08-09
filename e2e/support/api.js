@@ -81,6 +81,34 @@ class ApiClient {
   }
 
   /**
+   * A multipart/form-data POST, for the image-upload endpoint.
+   *
+   * Deliberately does NOT set Content-Type: fetch has to generate it itself so the multipart
+   * boundary in the header matches the one in the body. Setting it by hand produces a body the
+   * server cannot parse, which surfaces as a confusing 400 about a missing file part.
+   */
+  async multipart(path, form) {
+    const csrfResponse = await fetch(`${API}/auth/csrf`, { headers: { Cookie: this.cookieHeader() } });
+    this.absorb(csrfResponse);
+    this.csrf = (await csrfResponse.json()).token;
+    const headers = { Accept: "application/json", "X-XSRF-TOKEN": this.csrf };
+    const cookie = this.cookieHeader();
+    if (cookie) headers.Cookie = cookie;
+    const response = await fetch(`${API}${path}`, { method: "POST", headers, body: form });
+    this.absorb(response);
+    const text = await response.text();
+    let payload = null;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
+    if (!response.ok) {
+      const error = new Error(payload?.message || `POST ${path} -> ${response.status}`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    return payload;
+  }
+
+  /**
    * Like request(), but waits out AuthRateLimitFilter's 60-second window on a 429.
    * The limits are deliberately low (register 10/min, verify-email 10/min per IP) and every
    * Playwright worker is 127.0.0.1, so a suite that creates a dozen accounts will legitimately

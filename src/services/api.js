@@ -165,6 +165,26 @@ export const getStoreProducts = async () => {
 };
 
 /**
+ * One product by its public slug.
+ *
+ * The product page used to resolve its product out of the 200-item list above with
+ * product_list.find(...), which meant a direct hit on a product outside that window rendered
+ * "Product not found" — reproducible on any catalogue over 200 products. The page now asks the
+ * server for exactly the product in the URL, so direct navigation, refresh and Back/Forward work
+ * regardless of catalogue size, and the listing fetch is no longer load-bearing for it.
+ */
+export const getProductBySlug = async (slug) => {
+  const response = await fetch(`${API_URL}/products/slug/${encodeURIComponent(slug)}`);
+  return parseResponse(response);
+};
+
+/** The canonical slug for a legacy numeric /product/{id} link, so it can be redirected. */
+export const getCanonicalProductSlug = async (productId) => {
+  const response = await fetch(`${API_URL}/products/${encodeURIComponent(productId)}/canonical`);
+  return parseResponse(response);
+};
+
+/**
  * The Best Sellers ranking. Public, so no credentials.
  *
  * Returns [{ product, soldQuantity, soldRevenue }] already ordered by the server — the order is
@@ -379,6 +399,24 @@ export const uploadProductImage = (accessToken, productId, file, metadata = {}) 
 
 export const deleteProductImage = (accessToken, productId, imageId) =>
   authenticatedRequest(`/products/${productId}/images/${imageId}`, accessToken, { method: "DELETE" });
+
+/**
+ * Replace the whole gallery order in one call, rather than sending a move per image. Two admins
+ * dragging at the same time then resolve to one of the two orders they each saw, instead of
+ * interleaving into a third that neither chose.
+ */
+export const reorderProductImages = (accessToken, productId, imageIdsInOrder) =>
+  authenticatedRequest(`/products/${productId}/images/order`, accessToken, {
+    method: "PUT", body: JSON.stringify(imageIdsInOrder),
+  });
+
+export const setPrimaryProductImage = (accessToken, productId, imageId) =>
+  authenticatedRequest(`/products/${productId}/images/${imageId}/primary`, accessToken, { method: "PUT" });
+
+export const updateProductImage = (accessToken, productId, imageId, changes) =>
+  authenticatedRequest(`/products/${productId}/images/${imageId}`, accessToken, {
+    method: "PATCH", body: JSON.stringify(changes),
+  });
 
 export const adjustInventory = (accessToken, variantId, quantity, movementType, reason) => {
   return authenticatedRequest(`/inventory/variants/${variantId}/adjust`, accessToken, {
