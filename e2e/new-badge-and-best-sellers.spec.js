@@ -199,7 +199,11 @@ test("the ranking counts paid orders, ignores cancelled ones and survives a dupl
   });
 
   const account = await signInAsNewCustomer(page, "bs");
-  await addToBag(page, { productId: top.productId, quantity: 20, expectedBadge: 20 });
+  // 40, not a small number: the ranking endpoint caps at its top 50, and ECOMMERCE_TEST_DB
+  // accumulates sold products across E2E runs. The retained quantity after the partial return
+  // below (40 - 15 = 25) has to keep this product inside that window, or the final assertion
+  // reads "missing from the ranking" when the maths it is checking was actually right.
+  await addToBag(page, { productId: top.productId, quantity: 40, expectedBadge: 40 });
   const topOrder = await checkout(page, { account });
   await addToBag(page, { productId: runnerUp.productId, quantity: 8, expectedBadge: 8 });
   await checkout(page, { account });
@@ -211,7 +215,7 @@ test("the ranking counts paid orders, ignores cancelled ones and survives a dupl
 
   const ranked = await bestSellers(page, 50);
   const soldFor = (id) => ranked.find((row) => row.productId === id)?.sold;
-  expect(soldFor(top.productId), "20 paid units").toBe(20);
+  expect(soldFor(top.productId), "40 paid units").toBe(40);
   expect(soldFor(runnerUp.productId), "8 paid units").toBe(8);
   expect(soldFor(cancelled.productId), "a cancelled order contributes nothing").toBeUndefined();
   expect(ranked.findIndex((row) => row.productId === top.productId))
@@ -225,7 +229,7 @@ test("the ranking counts paid orders, ignores cancelled ones and survives a dupl
   expect(Number(sqlValue(`SELECT COUNT(*) FROM PAYMENTS WHERE ORDER_ID=${topOrder}`)),
     "the duplicate really is there").toBeGreaterThan(1);
   expect((await bestSellers(page, 50)).find((row) => row.productId === top.productId)?.sold,
-    "a duplicated payment callback must not inflate sales").toBe(20);
+    "a duplicated payment callback must not inflate sales").toBe(40);
 
   // A partial return reduces the retained quantity by exactly what came back.
   expect(await markDelivered(topOrder)).toBe("DELIVERED");
@@ -236,13 +240,13 @@ test("the ranking counts paid orders, ignores cancelled ones and survives a dupl
   sql(`INSERT INTO RETURN_ITEMS (RETURN_ID, ORDER_ITEM_ID, QUANTITY) VALUES (${returnId}, ${orderItemId}, 15)`);
 
   expect((await bestSellers(page, 50)).find((row) => row.productId === top.productId)?.sold,
-    "15 of 20 units came back, so 5 retained units still count").toBe(5);
+    "15 of 40 units came back, so 25 retained units still count").toBe(25);
   // Cross-checked against the database by an independent restatement of the same rules, so the
   // aggregate is not merely being compared with itself.
-  expect(netSoldFromDatabase(top.productId), "API and database must agree on net units sold").toBe(5);
+  expect(netSoldFromDatabase(top.productId), "API and database must agree on net units sold").toBe(25);
 
   // And a full return removes the product from the ranking entirely.
-  sql(`UPDATE RETURN_ITEMS SET QUANTITY = 20 WHERE RETURN_ID = ${returnId}`);
+  sql(`UPDATE RETURN_ITEMS SET QUANTITY = 40 WHERE RETURN_ID = ${returnId}`);
   expect((await bestSellers(page, 50)).find((row) => row.productId === top.productId),
     "a fully returned sale is not a sale").toBeUndefined();
 });

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import * as ReactRouter from "react-router-dom";
 import ProductDetail from "./ProductDetail";
 import { StoreContext } from "../../context/StoreContext";
 import { getProductBySlug, getCanonicalProductSlug } from "../../services/api";
@@ -12,21 +13,20 @@ jest.mock("../../services/api", () => ({
 }));
 
 const product = { _id:"14", productId:14, name:"Rayban", brand:"Shades World", description:"Frame", price:1999,
-  // Each colourway carries TWO photos of its own, plus one general product shot. That is the shape
-  // the gallery is built for: a variant's additional pictures are its own, and the general shot is
-  // a fallback for colourways that have none — never a suffix appended to every gallery.
-  image:"/main.jpg", imageAlt:"Rayban", images:[{ imageId:1, imageUrl:"/main.jpg", isPrimary:true },
-    { imageId:2, imageUrl:"/blue.jpg", variantId:13 }, { imageId:4, imageUrl:"/blue-2.jpg", variantId:13 },
-    { imageId:3, imageUrl:"/pink.jpg", variantId:14 }, { imageId:5, imageUrl:"/pink-2.jpg", variantId:14 }],
+  // The product-family shape: every photo belongs to exactly one variant, each variant leads with
+  // its own MAIN image (isPrimary), and Blue at position 1 is the family's Main Product.
+  image:"/blue.jpg", imageAlt:"Rayban", images:[
+    { imageId:2, imageUrl:"/blue.jpg", variantId:13, isPrimary:true }, { imageId:4, imageUrl:"/blue-2.jpg", variantId:13 },
+    { imageId:3, imageUrl:"/pink.jpg", variantId:14, isPrimary:true }, { imageId:5, imageUrl:"/pink-2.jpg", variantId:14 }],
   categories:[{ categoryName:"Unisex" }], category:"Unisex", attributes:{}, isNew:false, defaultVariantId:13,
-  variants:[{ variantId:13, variantName:"Blue", sku:"BLUE", price:1999, quantityAvailable:3, lowStockThreshold:1, attributes:{ color:"Blue" } },
-    { variantId:14, variantName:"Pink", sku:"PINK", price:2099, quantityAvailable:4, lowStockThreshold:1, attributes:{ color:"Pink" } }] };
+  variants:[{ variantId:13, position:1, mainVariant:true, variantName:"Blue", sku:"BLUE", price:1999, quantityAvailable:3, lowStockThreshold:1, attributes:{ color:"Blue" } },
+    { variantId:14, position:2, mainVariant:false, variantName:"Pink", sku:"PINK", price:2099, quantityAvailable:4, lowStockThreshold:1, attributes:{ color:"Pink" } }] };
 // The route the bug was reported on: a single variant, so "the variant next to the
 // primary tile" and "the default variant" are the same line.
 const singleVariant = { ...product, _id:"19", productId:19, name:"women", price:123, image:"/w-main.jpg",
-  images:[{ imageId:16, imageUrl:"/w-main.jpg", isPrimary:true }, { imageId:17, imageUrl:"/w-ggg.jpg", variantId:21 }],
+  images:[{ imageId:16, imageUrl:"/w-main.jpg", variantId:21, isPrimary:true }, { imageId:17, imageUrl:"/w-ggg.jpg", variantId:21 }],
   defaultVariantId:21, color:"GGG",
-  variants:[{ variantId:21, variantName:"423tr", sku:"24234234", price:123, quantityAvailable:1, lowStockThreshold:1, attributes:{ color:"GGG" } }] };
+  variants:[{ variantId:21, position:1, mainVariant:true, variantName:"423tr", sku:"24234234", price:123, quantityAvailable:1, lowStockThreshold:1, attributes:{ color:"GGG" } }] };
 
 /**
  * The fixtures above are in the storefront's mapped shape, which is what this page used to read
@@ -117,8 +117,8 @@ test("changing the photo does not change what Add to Bag buys", async () => {
   const { container } = await renderDetail(store);
   fireEvent.click(screen.getByRole("button", { name:"Rayban Pink Pink" }));
   expect(mainPhoto(container)).toHaveAttribute("src", "/pink.jpg");
-  // Pink's gallery is its own two photos plus the general shot, so three in all.
-  fireEvent.click(screen.getByRole("button", { name:"Show photo 2 of 3" }));
+  // Pink's gallery is exactly its own two photos — nothing borrowed, nothing appended.
+  fireEvent.click(screen.getByRole("button", { name:"Show photo 2 of 2" }));
   expect(mainPhoto(container)).toHaveAttribute("src", "/pink-2.jpg");
   expect(screen.getByText("₹2,099")).toBeInTheDocument();
   expect(screen.getByText("4 in stock · SKU PINK")).toBeInTheDocument();
@@ -128,16 +128,14 @@ test("changing the photo does not change what Add to Bag buys", async () => {
 
 test("Next and Previous move through the gallery and wrap", async () => {
   const { container } = await renderDetail(buildStore({}));
-  // Blue's own two photos, then the general product shot — and Next wraps back round.
+  // Blue's main image leads, its additional photo follows, and Next wraps back round.
   expect(mainPhoto(container)).toHaveAttribute("src", "/blue.jpg");
   fireEvent.click(screen.getByRole("button", { name:"Next photo" }));
   expect(mainPhoto(container)).toHaveAttribute("src", "/blue-2.jpg");
   fireEvent.click(screen.getByRole("button", { name:"Next photo" }));
-  expect(mainPhoto(container)).toHaveAttribute("src", "/main.jpg");
-  fireEvent.click(screen.getByRole("button", { name:"Next photo" }));
   expect(mainPhoto(container)).toHaveAttribute("src", "/blue.jpg");
   fireEvent.click(screen.getByRole("button", { name:"Previous photo" }));
-  expect(mainPhoto(container)).toHaveAttribute("src", "/main.jpg");
+  expect(mainPhoto(container)).toHaveAttribute("src", "/blue-2.jpg");
 });
 
 test("arrow keys move through the gallery", async () => {
@@ -150,37 +148,97 @@ test("arrow keys move through the gallery", async () => {
 });
 
 const oduShape = (blackPhotoVariantId) => ({ ...product, images:[
-  { imageId:1, imageUrl:"/black-pair.jpg", isPrimary:true, variantId:blackPhotoVariantId },
+  { imageId:1, imageUrl:"/black-pair.jpg", isPrimary:blackPhotoVariantId === 13, variantId:blackPhotoVariantId },
   { imageId:2, imageUrl:"/black.jpg", variantId:13 },
-  { imageId:3, imageUrl:"/blue.jpg", variantId:14 },
+  { imageId:3, imageUrl:"/blue.jpg", variantId:14, isPrimary:true },
 ], variants:[
   { ...product.variants[0], variantName:"Ocean Black", attributes:{ color:"Black" }, quantityAvailable:0 },
   { ...product.variants[1], variantName:"Ocean Blue", attributes:{ color:"Blue" }, quantityAvailable:5 },
 ] });
 
-test("general product photos are shown alongside a colourway's own", async () => {
-  // Every stored photo must be reachable. Showing only the colourway's own photos dropped most
-  // products in the live catalogue to a single visible picture.
-  const odu = oduShape(undefined); // the Black pair's photo is still filed as "general"
+test("the Main Product's photos never leak into a colourway that has its own", async () => {
+  // The ODU complaint, settled by the model: the sold-out Black pair (the Main Product) owns its
+  // photographs — legacy variant-less rows included — and Blue's gallery is exactly Blue's own.
+  const odu = oduShape(undefined); // the Black pair's photo is a legacy row with no variantId
   const { container } = await renderDetail(buildStore({}, [odu]), odu);
   expect(screen.getByRole("button", { name:/Add Blue to bag/ })).toBeInTheDocument();
   expect(mainPhoto(container)).toHaveAttribute("src", "/blue.jpg");
-  // Two photos: Blue's own, then the general one — and Next can reach it.
-  expect(screen.getByRole("button", { name:"Next photo" })).toBeInTheDocument();
-  const sources = [...container.querySelectorAll(".pg-thumbs img")].map((img) => img.getAttribute("src"));
-  expect(sources).toEqual(["/blue.jpg", "/black-pair.jpg"]);
+  expect(screen.queryByRole("button", { name:"Next photo" })).toBeNull();
+  expect(container.querySelectorAll(".pg-thumbs img")).toHaveLength(0);
 });
 
-test("filing that photo against Black removes it from Blue's gallery", async () => {
-  // The ODU fix. Once the photo is assigned to the colourway it depicts — the "Shown for" control
-  // in the admin image editor — Blue stops showing it, without hiding anything from anyone else.
-  const odu = oduShape(13); // now owned by Ocean Black
+test("filing that photo against Black keeps it out of Blue's gallery just the same", async () => {
+  const odu = oduShape(13); // now explicitly owned by Ocean Black
   const { container } = await renderDetail(buildStore({}, [odu]), odu);
   expect(mainPhoto(container)).toHaveAttribute("src", "/blue.jpg");
   expect(screen.queryByRole("button", { name:"Next photo" })).toBeNull();
   const sources = [...container.querySelectorAll(".pg-thumbs img")].map((img) => img.getAttribute("src"));
   expect(sources).not.toContain("/black-pair.jpg");
   expect(sources).not.toContain("/black.jpg");
+});
+
+// ── Default selection: the Main Product first, with the safe out-of-stock fallback ─────────
+
+test("opens on the Main Product when it is in stock", async () => {
+  await renderDetail(buildStore({}));
+  expect(screen.getByRole("button", { name:"Add Blue to bag" })).toBeInTheDocument();
+  expect(screen.getByText("3 in stock · SKU BLUE")).toBeInTheDocument();
+});
+
+test("falls back to the first available variant when the Main Product is sold out", async () => {
+  const mainSoldOut = { ...product, variants:[
+    { ...product.variants[0], quantityAvailable:0 }, product.variants[1]] };
+  const { container } = await renderDetail(buildStore({}, [mainSoldOut]), mainSoldOut);
+  // Pink is selected and quoted; Blue is visibly unavailable but still present in the selector.
+  expect(screen.getByRole("button", { name:"Add Pink to bag" })).toBeInTheDocument();
+  expect(mainPhoto(container)).toHaveAttribute("src", "/pink.jpg");
+  expect(screen.getByRole("button", { name:/Rayban Blue Blue Out of stock/ })).toBeDisabled();
+});
+
+test("shows the Main Product with a disabled Sold Out state when nothing is purchasable", async () => {
+  const allSoldOut = { ...product, variants:[
+    { ...product.variants[0], quantityAvailable:0 },
+    { ...product.variants[1], quantityAvailable:0 }] };
+  const { container } = await renderDetail(buildStore({}, [allSoldOut]), allSoldOut);
+  // The Main Product's information still fronts the page — it is not hidden for being sold out.
+  expect(mainPhoto(container)).toHaveAttribute("src", "/blue.jpg");
+  expect(screen.getByText("Currently unavailable")).toBeInTheDocument();
+  const addButton = container.querySelector(".pd-add-btn");
+  expect(addButton).toBeDisabled();
+  expect(addButton).toHaveTextContent("Out of stock");
+});
+
+test("a ?variant= deep link carries the family position and is honoured when purchasable", async () => {
+  getProductBySlug.mockResolvedValue(apiShape(product));
+  render(<MemoryRouter initialEntries={["/product/rayban?variant=2"]}><StoreContext.Provider value={buildStore({})}>
+    <Routes><Route path="/product/:slug" element={<ProductDetail />} /></Routes></StoreContext.Provider></MemoryRouter>);
+  await screen.findByRole("heading", { level:1 });
+  expect(screen.getByRole("button", { name:"Add Pink to bag" })).toBeInTheDocument();
+});
+
+test("a legacy deep link carrying a raw variant id falls back to the default rule", async () => {
+  getProductBySlug.mockResolvedValue(apiShape(product));
+  render(<MemoryRouter initialEntries={["/product/rayban?variant=14"]}><StoreContext.Provider value={buildStore({})}>
+    <Routes><Route path="/product/:slug" element={<ProductDetail />} /></Routes></StoreContext.Provider></MemoryRouter>);
+  await screen.findByRole("heading", { level:1 });
+  // 14 is Pink's database id, not a position; it matches nothing and the Main Product is selected.
+  expect(screen.getByRole("button", { name:"Add Blue to bag" })).toBeInTheDocument();
+});
+
+test("choosing a colour writes its position, not its database id, into the URL", async () => {
+  // MemoryRouter keeps the location internal, so it is captured through a probe on the route.
+  const seen = { search:"" };
+  const CaptureSearch = () => {
+    seen.search = ReactRouter.useLocation().search;
+    return <ProductDetail />;
+  };
+  getProductBySlug.mockResolvedValue(apiShape(product));
+  render(<MemoryRouter initialEntries={["/product/rayban"]}><StoreContext.Provider value={buildStore({})}>
+    <Routes><Route path="/product/:slug" element={<CaptureSearch />} /></Routes></StoreContext.Provider></MemoryRouter>);
+  await screen.findByRole("heading", { level:1 });
+  fireEvent.click(screen.getByRole("button", { name:"Rayban Pink Pink" }));
+  await waitFor(() => expect(seen.search).toBe("?variant=2"));
+  // Pink's database id is 14; had the id been written this would be ?variant=14.
 });
 
 test("a single-photo gallery hides the navigation controls rather than showing dead ones", async () => {

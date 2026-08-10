@@ -18,6 +18,7 @@ const { checkout } = require("./support/shop");
 
 let product;
 let byName;
+let positionOf;
 
 test.beforeAll(async () => {
   const stamp = Date.now();
@@ -30,6 +31,9 @@ test.beforeAll(async () => {
     ],
   });
   byName = Object.fromEntries(product.variants.map((variant) => [variant.variantName, variant.variantId]));
+  // Deep links carry the family POSITION, never the database id — the id would republish exactly
+  // the sequential identifier the slug change removed from public URLs.
+  positionOf = Object.fromEntries(product.variants.map((variant) => [variant.variantName, variant.position]));
 
   // The primary photo deliberately belongs to the OUT-OF-STOCK colourway. That is the exact shape
   // that produced the bug; without it this spec would pass against the old code.
@@ -107,7 +111,7 @@ test("the server refuses an out-of-stock variant even when the client asks for i
 });
 
 test("a valid in-stock deep link is preserved", async ({ page }) => {
-  await page.goto(`/product/${product.productId}?variant=${byName.Green}`);
+  await page.goto(`/product/${product.productId}?variant=${positionOf.Green}`);
   await page.waitForLoadState("networkidle");
   const view = await shown(page);
   expect(view.colour).toBe("Green");
@@ -115,8 +119,14 @@ test("a valid in-stock deep link is preserved", async ({ page }) => {
   expect(view.hero).toBe(`https://images.test/variants/${byName.Green}/green.jpg`);
 });
 
-test("an out-of-stock or unknown deep link falls back to the first eligible variant", async ({ page }) => {
-  for (const [label, target] of [["out of stock", byName.Blue], ["unknown", 99999999]]) {
+test("an out-of-stock, unknown or legacy-id deep link falls back to the first eligible variant", async ({ page }) => {
+  for (const [label, target] of [
+    ["out of stock", positionOf.Blue],
+    ["unknown", 99999999],
+    // A pre-redesign link carrying Green's DATABASE id: it names no position, so it must fall
+    // back rather than accidentally selecting whatever variant the number happens to match.
+    ["legacy raw variant id", byName.Green],
+  ]) {
     await page.goto(`/product/${product.productId}?variant=${target}`);
     await page.waitForLoadState("networkidle");
     const view = await shown(page);
@@ -130,8 +140,9 @@ test("selection survives a manual change, a refresh and browser Back/Forward", a
   await page.waitForLoadState("networkidle");
   await page.locator(".pd-variant-options button", { hasText: "Green" }).click();
   await expect(page.locator(".pd-variant-label strong")).toHaveText("Green");
-  // A manual choice is reflected in the URL, which is what makes it survive a reload.
-  await expect(page).toHaveURL(new RegExp(`variant=${byName.Green}`));
+  // A manual choice is reflected in the URL as the family position — never the database id.
+  await expect(page).toHaveURL(new RegExp(`variant=${positionOf.Green}$`));
+  expect(page.url()).not.toContain(`variant=${byName.Green}`);
 
   await page.reload();
   await page.waitForLoadState("networkidle");
@@ -150,7 +161,7 @@ test("selection survives a manual change, a refresh and browser Back/Forward", a
 
 test("Add to Cart commits the exact variant that is selected", async ({ page }) => {
   const account = await signInAsNewCustomer(page, "variantadd");
-  await page.goto(`/product/${product.productId}?variant=${byName.Green}`);
+  await page.goto(`/product/${product.productId}?variant=${positionOf.Green}`);
   await page.waitForLoadState("networkidle");
   await expect(page.locator(".pd-variant-label strong")).toHaveText("Green");
   await page.locator(".pd-add-btn").click();
@@ -176,15 +187,18 @@ test("a product with every variant out of stock says so and cannot be bought", a
   expect(view.stock).toContain("Currently unavailable");
 });
 
-test("the API returns variants in a deterministic order", async ({ page }) => {
-  // The selection rule sorts by variantId itself, but the entity is ordered too — a rule that
+test("the API returns variants in family order, the Main Product first", async ({ page }) => {
+  // The selection rule sorts by position itself, but the entity is ordered too — a rule that
   // silently depends on arrival order is the kind that works until a query changes underneath it.
   await page.goto("/");
-  const ids = await page.evaluate(async (productId) => {
+  const variants = await page.evaluate(async (productId) => {
     const res = await fetch(`${window.location.origin.replace("3001", "8081")}/api/products/${productId}`);
-    return (await res.json()).variants.map((variant) => variant.variantId);
+    return (await res.json()).variants.map((variant) => ({
+      position: variant.position, mainVariant: variant.mainVariant,
+    }));
   }, product.productId);
-  expect(ids).toEqual([...ids].sort((first, second) => first - second));
+  expect(variants.map((variant) => variant.position)).toEqual([1, 2, 3]);
+  expect(variants.map((variant) => variant.mainVariant)).toEqual([true, false, false]);
   expect(Number(sqlValue(`SELECT COUNT(*) FROM PRODUCT_VARIANTS WHERE PRODUCT_ID=${product.productId}`))).toBe(3);
   expect(sql(`SELECT 1`)).toBe("1");
 });

@@ -2,6 +2,7 @@ import { createContext, useCallback, useEffect, useMemo, useRef, useState } from
 import { addCartItem, addWishlistItem, getCart, getStoreProducts, getWishlist, quoteCart, removeCartItem, removeWishlistItem, updateCartItem } from "../services/api";
 import { useAuth } from "./AuthContext";
 import { clearGuestCart, readGuestCart, writeGuestCart } from "../services/guestCart";
+import { onCatalogueChanged } from "../services/catalogueEvents";
 
 export const StoreContext = createContext(null);
 const storefrontCategories = ["All", "Men", "Women", "Unisex", "Accessory"];
@@ -25,28 +26,42 @@ const finiteOrNull = (value) => (value !== null && value !== "" && Number.isFini
 // One rule, used by the listing card (through mapProduct) and by the product page, so the colour
 // a card commits to and the colour the product page opens on can never disagree.
 //
+// Family order: the admin-chosen POSITION, 1..N, where position 1 IS the Main Product. The
+// variantId tie-break only matters for a payload that predates positions.
+const byFamilyOrder = (first, second) =>
+  Number(first.position ?? Number.MAX_SAFE_INTEGER) - Number(second.position ?? Number.MAX_SAFE_INTEGER)
+  || Number(first.variantId) - Number(second.variantId);
+
+/** The family's Main Product — position 1. Falls back to family order for legacy payloads. */
+export const mainVariantOf = (product) => {
+  const variants = product?.variants || [];
+  return variants.find((candidate) => candidate.mainVariant === true || Number(candidate.position) === 1)
+    || [...variants].sort(byFamilyOrder)[0] || null;
+};
+
 // "Purchasable" is the only thing that makes a variant eligible to be selected automatically:
-// active, and with stock. Ordering is by variantId rather than by array position — the API's list
-// order is now pinned by @OrderBy on the entity, but a selection rule that silently depends on
-// arrival order is exactly the kind that works until a query changes underneath it.
+// active, and with stock. Ordered by family position, so the Main Product is chosen first when it
+// is buyable and the fallback walks the family in the order the admin arranged it.
 export const purchasableVariants = (variants) => (variants || [])
   .filter((variant) => variant.isActive !== false && Number(variant.quantityAvailable) > 0)
-  .sort((first, second) => Number(first.variantId) - Number(second.variantId));
+  .sort(byFamilyOrder);
 
 /**
- * The variant a surface should open on.
+ * The variant a surface should open on: the Main Product (position 1) when it is purchasable,
+ * else the first purchasable variant in family order.
  *
- * `requestedVariantId` is a deep link (?variant=). It wins only when it names a variant that is
- * genuinely purchasable; an unknown, inactive or out-of-stock request falls back to the first
- * eligible variant rather than honouring a link to something nobody can buy. Returns null when
+ * `requestedPosition` is a deep link (?variant=, carrying the family POSITION — never the
+ * sequential variant id, which public URLs must not publish). It wins only when it names a
+ * variant that is genuinely purchasable; an unknown, inactive or out-of-stock request falls back
+ * to the rule above rather than honouring a link to something nobody can buy. Returns null when
  * nothing is purchasable, which is the sold-out state — deliberately not "variant zero", because
  * pretending some variant is available is the bug this rule exists to prevent.
  */
-export const selectDefaultVariant = (variants, requestedVariantId) => {
+export const selectDefaultVariant = (variants, requestedPosition) => {
   const eligible = purchasableVariants(variants);
-  const requested = requestedVariantId == null || requestedVariantId === ""
+  const requested = requestedPosition == null || requestedPosition === ""
     ? undefined
-    : eligible.find((variant) => String(variant.variantId) === String(requestedVariantId));
+    : eligible.find((variant) => String(variant.position) === String(requestedPosition));
   return requested || eligible[0] || null;
 };
 
@@ -55,68 +70,53 @@ export const selectDefaultVariant = (variants, requestedVariantId) => {
  * product gallery, the listing card, the variant tiles — so they cannot disagree about which
  * colourway a customer is looking at.
  *
- * Order:
- *   1. the variant's own photos, then the general product photos,
- *   2. general product photos alone, when the variant has none of its own,
- *   3. photos belonging to some OTHER PURCHASABLE variant,
- *   4. anything left.
+ * The redesigned model files every photograph against exactly one variant, and each variant's
+ * main image leads its gallery (the server orders images main-first). The rule is deliberately
+ * short and deterministic:
  *
- * Step 1 briefly returned the variant's own photos and nothing else, to stop ODU's general shot —
- * which is a photograph of the sold-out Black pair — appearing among Blue's additional pictures.
- * That was the wrong cut. It hid every genuinely product-wide photo: measured across the live
- * catalogue, five of six products dropped from 2-3 stored photos to ONE visible, because each was
- * authored as "one photo per colourway plus one general".
+ *   1. the selected variant's own photos — its main image first, then its additional photos in
+ *      saved order;
+ *   2. if it has none, the MAIN PRODUCT's (variant 1's) gallery, clearly a fallback;
+ *   3. if variant 1 has none either, nothing — the caller shows the standard placeholder frame.
  *
- * A general photo IS product-wide, and belongs in every colourway's gallery. ODU's problem is that
- * a colourway-specific photo was FILED as general — a data problem, not a rule problem. The fix for
- * it is the "Shown for" control in the admin image editor, which moves that photo onto Ocean Black
- * where it belongs; it then stops appearing under Blue, without hiding anything from anyone else.
- *
- * Step 3 is the fix for a reported bug and the reason this is not a one-liner. Every fallback used
- * to end at "the primary image, else the first image", none of which asks whether the variant that
- * owns that photo can actually be bought. A product whose only photography belonged to a sold-out
- * colourway therefore showed that colourway everywhere while quoting, labelling and selling a
- * different one: the page said "Add Orange to bag" beside two photographs of Blue, and the Shop
- * card did the same. Preferring a purchasable variant's photography means the customer sees
- * something they can buy.
- *
- * Step 4 still exists, and is reached only when NOTHING is purchasable. A fully sold-out product
- * has no in-stock colourway to borrow from, and showing its photographs is better than showing an
- * empty frame — it is not misleading there, because nothing on the page is for sale either.
+ * No other variant's photography is ever mixed in. The old rule appended "general product photos"
+ * to every colourway and borrowed a purchasable sibling's photos as a third tier; both tiers are
+ * gone because the model is: a photo belongs to a variant. An image that still arrives with a
+ * null variantId (a payload predating the migration, or a raw-SQL variant delete) is read as the
+ * Main Product's, which is also where the server files such rows.
  */
 export const galleryFor = (product, variant) => {
   const images = product?.images || [];
   if (!images.length) return [];
-  const sameVariant = (image, candidate) => candidate != null
-    && image.variantId != null
-    && String(image.variantId) === String(candidate);
+  if (!variant) return images;
+  const main = mainVariantOf(product);
+  const belongsTo = (image, candidate) => candidate != null && (
+    image.variantId == null
+      ? String(candidate.variantId) === String(main?.variantId)
+      : String(image.variantId) === String(candidate.variantId));
 
-  const own = variant ? images.filter((image) => sameVariant(image, variant.variantId)) : [];
-  const general = images.filter((image) => image.variantId == null);
-  if (own.length) return [...own, ...general];
-  if (general.length) return general;
+  const own = images.filter((image) => belongsTo(image, variant));
+  if (own.length) return own;
 
-  // Borrowed photography. Ordered by the shared variant order so the choice is deterministic
-  // rather than "whichever image row came back first".
-  const buyable = purchasableVariants(product?.variants)
-    .filter((candidate) => String(candidate.variantId) !== String(variant?.variantId));
-  const borrowed = buyable.flatMap((candidate) => images.filter((image) => sameVariant(image, candidate.variantId)));
-  if (borrowed.length) return borrowed;
-
-  return images;
+  if (main && String(main.variantId) !== String(variant.variantId)) {
+    return images.filter((image) => belongsTo(image, main));
+  }
+  return [];
 };
 
 /** The single photo that best represents a variant. Same rule as the gallery, first frame only. */
 export const imageForVariant = (product, variant) => galleryFor(product, variant)[0];
 
 /**
- * True when the photo shown for `variant` is not actually a photo of it — either a general product
- * shot or another colourway's. Surfaces use this to say so rather than letting the customer assume
- * the picture is the thing they are buying.
+ * True when the photo shown for `variant` is not actually a photo of it — i.e. the gallery is
+ * showing the Main Product's photography because this variant has none. Surfaces use this to say
+ * so rather than letting the customer assume the picture is the thing they are buying.
  */
-export const isBorrowedImage = (product, variant, image) => Boolean(image)
-  && image.variantId != null
-  && String(image.variantId) !== String(variant?.variantId);
+export const isBorrowedImage = (product, variant, image) => {
+  if (!image || !variant) return false;
+  const ownerId = image.variantId == null ? mainVariantOf(product)?.variantId : image.variantId;
+  return String(ownerId) !== String(variant.variantId);
+};
 
 /**
  * The storefront address of a product. Every link to a product page must be built with this and
@@ -137,9 +137,9 @@ export const productPath = (product) => {
 // two cards for the same product end up disagreeing.
 export const mapProduct = (product) => {
   // Sorted here too, so the variant tiles, the colour filter and the selection rule all iterate
-  // the same order regardless of what the API hands back.
+  // the same order regardless of what the API hands back. Family order: position, main first.
   const variants = (product.variants || []).filter((variant) => variant.isActive)
-    .sort((first, second) => Number(first.variantId) - Number(second.variantId));
+    .sort(byFamilyOrder);
   // Falls back to variants[0] only for DISPLAY: a fully sold-out product still needs a colour and
   // a price on its card. `available` below is what gates the buy button.
   const firstVariant = selectDefaultVariant(variants) || variants[0];
@@ -251,20 +251,50 @@ const StoreContextProvider = ({ children }) => {
     if (customerIdRef.current === null) writeGuestCart(cartItemsRef.current);
   }, []);
 
-  const refreshProducts = useCallback(() => {
-    setProductsLoading(true);
+  /**
+   * `silent` refreshes swap the list in place without raising productsLoading, so a routine
+   * resync never flashes "Loading catalogue…" over a page the customer is already reading.
+   */
+  const loadProducts = useCallback((silent) => {
+    if (!silent) setProductsLoading(true);
     setProductsError("");
     getStoreProducts()
       .then((page) => { productListRef.current = (page.content || []).map(mapProduct); setProducts(productListRef.current); })
-      .catch((error) => setProductsError(error.message))
-      .finally(() => setProductsLoading(false));
+      .catch((error) => { if (!silent) setProductsError(error.message); })
+      .finally(() => { if (!silent) setProductsLoading(false); });
   }, []);
+  const refreshProducts = useCallback(() => loadProducts(false), [loadProducts]);
+  const lastFocusRefreshRef = useRef(0);
 
   useEffect(() => {
     refreshProducts();
-    window.addEventListener("shades:products-changed", refreshProducts);
-    return () => window.removeEventListener("shades:products-changed", refreshProducts);
-  }, [refreshProducts]);
+    // Stamped now so the focus events that accompany the tab's own opening do not immediately
+    // duplicate the fetch above.
+    lastFocusRefreshRef.current = Date.now();
+    // The catalogue is fetched once per tab, so without these a storefront tab left open while a
+    // product was published from the ADMIN — same tab or another — kept showing the old list:
+    // the new product missing, and cards for since-removed products answering "Product not
+    // found" on click. onCatalogueChanged hears the same-tab window event AND the cross-tab
+    // broadcast; silent, so a resync never flashes "Loading" over a page already being read.
+    const unsubscribe = onCatalogueChanged(() => loadProducts(true));
+    // Belt and braces for changes nothing announced (another admin on another machine, say):
+    // returning to the tab resyncs too. The throttle only has to absorb focus flapping —
+    // focus and visibilitychange fire together on a tab switch.
+    const onReturnToTab = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < 3_000) return;
+      lastFocusRefreshRef.current = now;
+      loadProducts(true);
+    };
+    window.addEventListener("focus", onReturnToTab);
+    document.addEventListener("visibilitychange", onReturnToTab);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", onReturnToTab);
+      document.removeEventListener("visibilitychange", onReturnToTab);
+    };
+  }, [refreshProducts, loadProducts]);
 
   useEffect(() => {
     if (!customerId) { setWishlistItems([]); return; }
@@ -458,11 +488,12 @@ const StoreContextProvider = ({ children }) => {
     const refresh = () => refreshQuote();
     // An administrator activating or editing an offer changes the answer without the bag changing.
     window.addEventListener("shades:offer-changed", refresh);
-    window.addEventListener("shades:products-changed", refresh);
+    // Catalogue changes (a price edit, say) re-quote too — from this tab or another.
+    const unsubscribeCatalogue = onCatalogueChanged(refresh);
     return () => {
       cancel();
       window.removeEventListener("shades:offer-changed", refresh);
-      window.removeEventListener("shades:products-changed", refresh);
+      unsubscribeCatalogue();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quoteSignature, refreshQuote, product_list.length]);

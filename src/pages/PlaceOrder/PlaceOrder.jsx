@@ -3,6 +3,7 @@ import "./PlaceOrder.css";
 import { StoreContext, resolveCartLines } from "../../context/StoreContext";
 import { useAuth } from "../../context/AuthContext";
 import { createAddress, createOrder, getAddresses, processMockPayment } from "../../services/api";
+import { announceCatalogueChanged } from "../../services/catalogueEvents";
 import { pincodeError, sanitisePincode } from "../../services/pincode";
 import { phoneError } from "../../services/phone";
 import { Link, useNavigate } from "react-router-dom";
@@ -139,7 +140,7 @@ const PlaceOrder = () => {
       // The order deducted stock server-side, so every cached quantity in product_list is now
       // stale — without this the shopper sees the pre-purchase stock until a full page reload,
       // and the Add buttons keep offering units that no longer exist.
-      window.dispatchEvent(new Event("shades:products-changed"));
+      announceCatalogueChanged();
       navigate("/my-orders", { replace: true, state: { checkoutComplete: true, orderId: createdOrder.orderId } });
     } catch (requestError) {
       setError(createdOrder
@@ -147,7 +148,7 @@ const PlaceOrder = () => {
         : requestError.message);
       // A rejected order is usually a stock rejection, and the quantities on screen are exactly
       // what the shopper needs corrected before retrying. Refetch so the bag shows real stock.
-      if (!createdOrder) window.dispatchEvent(new Event("shades:products-changed"));
+      if (!createdOrder) announceCatalogueChanged();
     } finally {
       setSubmitting(false);
     }

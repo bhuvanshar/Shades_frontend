@@ -52,21 +52,17 @@ const createProduct = async ({ name, categoryName = "Men", variants }) => {
     attributes: { color: variant.color },
   });
 
-  // The create endpoint takes exactly one initialVariant; any others go through the add-variant
-  // endpoint, which is also how the admin UI builds a multi-colour product.
-  const [first, ...rest] = variants;
+  // The structured family create: every variant in one request, list order becoming the family
+  // order (index 0 = the Main Product at position 1). This is the same call the admin wizard
+  // makes, so the fixtures exercise the real creation path.
   const created = await account.client.post("/products", {
     productName: name,
     productDescription: `${name} shared product copy`,
     brand: "Shades World",
-    basePrice: first.price,
     categoryIds: [categoryId],
     attributes: { frame_material: "Steel", uv_protection: "UV400" },
-    initialVariant: asVariantRequest(first),
+    variants: variants.map(asVariantRequest),
   });
-  for (const variant of rest) {
-    await account.client.post(`/products/${created.productId}/variants`, asVariantRequest(variant));
-  }
 
   const full = await account.client.get(`/products/${created.productId}`);
   return {
@@ -76,7 +72,8 @@ const createProduct = async ({ name, categoryName = "Men", variants }) => {
     slug: full.slug,
     name: full.productName,
     variants: full.variants.map((variant) => ({
-      variantId: variant.variantId, sku: variant.sku, variantName: variant.variantName,
+      variantId: variant.variantId, position: variant.position, mainVariant: variant.mainVariant,
+      sku: variant.sku, variantName: variant.variantName,
       price: Number(variant.price), quantityAvailable: variant.quantityAvailable,
     })),
   };

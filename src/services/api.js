@@ -361,6 +361,12 @@ export const deactivateCoupon = async (accessToken, couponId) => {
 export const getAdminProducts = (accessToken) =>
   authenticatedRequest("/products/admin/all?size=200&sort=productId,desc", accessToken);
 
+/** One product, fresh — how the wizard resyncs after an image or variant operation. */
+export const getProductById = async (productId) => {
+  const response = await fetch(`${API_URL}/products/${productId}`);
+  return parseResponse(response);
+};
+
 export const getCategories = async () => {
   const response = await fetch(`${API_URL}/categories`);
   return parseResponse(response);
@@ -383,6 +389,15 @@ export const addProductVariant = (accessToken, productId, variant) =>
 
 export const deleteProductVariant = (accessToken, productId, variantId) =>
   authenticatedRequest(`/products/${productId}/variants/${variantId}`, accessToken, { method: "DELETE" });
+
+/** Archive (false) or restore (true) one variant — the safe alternative to deleting sold stock. */
+export const setProductVariantActive = (accessToken, productId, variantId, active) =>
+  authenticatedRequest(`/products/${productId}/variants/${variantId}/active?active=${active}`, accessToken,
+    { method: "PATCH" });
+
+/** The deliberate "Set as Main Variant" workflow: moves the variant to position 1. */
+export const setMainProductVariant = (accessToken, productId, variantId) =>
+  authenticatedRequest(`/products/${productId}/variants/${variantId}/main`, accessToken, { method: "PUT" });
 
 export const addProductImage = (accessToken, productId, image) =>
   authenticatedRequest(`/products/${productId}/images`, accessToken, { method: "POST", body: JSON.stringify(image) });

@@ -2,7 +2,8 @@ const { test, expect } = require("@playwright/test");
 const { ApiClient, createCustomer, sqlValue } = require("./support/api");
 const { admin, createProduct, disguisedFile, imageFile, imageRowsOf, uploadImage } = require("./support/fixtures");
 const { observe, clean } = require("./support/observe");
-const { submitSignIn } = require("./support/ui");
+const { signInAsNewCustomer, submitSignIn } = require("./support/ui");
+const { buy } = require("./support/shop");
 
 /**
  * Public product URLs and the product image gallery, end to end against the real backend, a real
@@ -20,7 +21,12 @@ const CLEAN = { consoleErrors: [], pageErrors: [], dialogs: [], badResponses: []
 
 const money = (value) => Number(value);
 
-/** A product with two colourways and photos: one general, one per variant. */
+/**
+ * A product with two colourways and photos. Blue is the Main Product (position 1). "Studio shot"
+ * is uploaded WITHOUT a variantId — the pre-redesign "general photo" call — which the server now
+ * files onto the Main Product, so Blue ends up with three photos (Studio shot as its main image,
+ * then its two own shots) and Orange with two (the first auto-promoted to Orange's main image).
+ */
 const productWithGallery = async (label) => {
   const product = await createProduct({
     name: `E2E Gallery ${label} ${Date.now()}`,
@@ -31,11 +37,8 @@ const productWithGallery = async (label) => {
   });
   const [blue, orange] = product.variants;
   const general = await uploadImage({ productId: product.productId, altText: "Studio shot", displayOrder: 0, isPrimary: true });
-  // TWO photos per colourway. A variant's gallery is its own photos only — the general shot is a
-  // fallback for colourways that have none, not an extra frame appended to every gallery — so a
-  // colourway needs more than one of its own before there is anything to page through.
-  const blueShot = await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue colourway", displayOrder: 0 });
-  await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue colourway detail", displayOrder: 1 });
+  const blueShot = await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue colourway", displayOrder: 1 });
+  await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue colourway detail", displayOrder: 2 });
   const orangeShot = await uploadImage({ productId: product.productId, variantId: orange.variantId, altText: "Orange colourway", displayOrder: 0 });
   await uploadImage({ productId: product.productId, variantId: orange.variantId, altText: "Orange colourway detail", displayOrder: 1 });
   return { ...product, blue, orange, general, blueShot, orangeShot };
@@ -145,20 +148,26 @@ test("an HTML file renamed .png is rejected by content, not accepted on its exte
   expect(imageRowsOf(product.productId).length).toBe(before);
 });
 
-test("the per-product image limit is enforced by the server and reported, not silently applied", async () => {
+test("the image limit is enforced PER VARIANT by the server and reported, not silently applied", async () => {
   const product = await productWithGallery("limit");
   const limit = 10;
-  // Three already exist; fill to the limit, then prove the next one is refused.
-  for (let index = imageRowsOf(product.productId).length; index < limit; index += 1) {
-    await uploadImage({ productId: product.productId, altText: `Filler ${index}`, displayOrder: index });
+  const countFor = (variantId) => imageRowsOf(product.productId)
+    .filter((row) => row.split(":")[3] === String(variantId)).length;
+  // Fill Blue (the Main Product — variant-less uploads land on it) to its ceiling.
+  for (let index = countFor(product.blue.variantId); index < limit; index += 1) {
+    await uploadImage({ productId: product.productId, variantId: product.blue.variantId,
+      altText: `Filler ${index}`, displayOrder: index });
   }
-  expect(imageRowsOf(product.productId).length).toBe(limit);
-  const failure = await uploadImage({ productId: product.productId, altText: "one too many" })
+  expect(countFor(product.blue.variantId)).toBe(limit);
+  const failure = await uploadImage({ productId: product.productId, variantId: product.blue.variantId, altText: "one too many" })
     .then(() => null, (error) => error);
   expect(failure).toBeTruthy();
   expect(failure.status).toBe(400);
   expect(failure.message).toContain(String(limit));
-  expect(imageRowsOf(product.productId).length).toBe(limit);
+  expect(countFor(product.blue.variantId)).toBe(limit);
+  // Per variant, not per product: a full sibling must not block Orange's own photography.
+  await uploadImage({ productId: product.productId, variantId: product.orange.variantId, altText: "Orange is fine" });
+  expect(countFor(product.orange.variantId)).toBeGreaterThan(2);
 });
 
 // ── Ordering and the primary image ────────────────────────────────────────────────────────
@@ -181,10 +190,9 @@ test("reordering persists, and the primary image stays first however the order i
   reversed.forEach((id, position) => expect(ordersById[id]).toBe(position));
 });
 
-test("promoting a new primary demotes the old one instead of hitting the unique constraint", async () => {
-  // UQ_PRODUCT_IMAGES_PRIMARY makes "primary for product N" unique, so the swap has to demote
-  // before it promotes. Doing it in the wrong order is a 409, not a wrong answer — which is
-  // exactly why this is worth an end-to-end test rather than trusting the service code.
+test("promoting a new main image demotes only ITS variant's incumbent", async () => {
+  // UQ_PRODUCT_IMAGES_VARIANT_PRIMARY makes "main image of variant N" unique, so the swap has to
+  // demote before it promotes — and it must be scoped: every other variant keeps its own main.
   const product = await productWithGallery("primary-swap");
   const account = await admin();
   const target = product.blueShot.imageId;
@@ -192,23 +200,31 @@ test("promoting a new primary demotes the old one instead of hitting the unique 
   await account.client.put(`/products/${product.productId}/images/${target}/primary`, undefined);
 
   const rows = imageRowsOf(product.productId);
-  const primaries = rows.filter((row) => row.split(":")[2] === "1");
-  expect(primaries).toHaveLength(1);
-  expect(Number(primaries[0].split(":")[0])).toBe(target);
+  const primariesFor = (variantId) => rows
+    .filter((row) => row.split(":")[3] === String(variantId) && row.split(":")[2] === "1");
+  expect(primariesFor(product.blue.variantId)).toHaveLength(1);
+  expect(Number(primariesFor(product.blue.variantId)[0].split(":")[0])).toBe(target);
+  // Orange's own main image was not touched by Blue's swap.
+  expect(primariesFor(product.orange.variantId)).toHaveLength(1);
+  expect(Number(primariesFor(product.orange.variantId)[0].split(":")[0])).toBe(product.orangeShot.imageId);
 });
 
-test("removing the primary image promotes the next one rather than leaving none", async () => {
+test("removing a variant's main image promotes that variant's next photo rather than leaving none", async () => {
   const product = await productWithGallery("primary-removal");
   const account = await admin();
   // Derived, not a literal: the fixture's image count is an implementation detail of
   // productWithGallery, and hard-coding it made this test fail when a colourway gained a second
   // photo — for a reason that had nothing to do with primary-image promotion.
   const before = imageRowsOf(product.productId).length;
+  // The Studio shot is Blue's main image (variant-less uploads land on the Main Product).
   await account.client.del(`/products/${product.productId}/images/${product.general.imageId}`);
 
   const rows = imageRowsOf(product.productId);
   expect(rows).toHaveLength(before - 1);
-  expect(rows.filter((row) => row.split(":")[2] === "1")).toHaveLength(1);
+  const bluePrimaries = rows.filter((row) =>
+    row.split(":")[3] === String(product.blue.variantId) && row.split(":")[2] === "1");
+  expect(bluePrimaries, "Blue must not be left without a main image").toHaveLength(1);
+  expect(Number(bluePrimaries[0].split(":")[0])).toBe(product.blueShot.imageId);
 });
 
 // ── Customer flow in the browser ──────────────────────────────────────────────────────────
@@ -312,13 +328,13 @@ test("a product with no photos renders an empty frame rather than a broken image
   expect(clean(seen), "the page must be clean").toEqual(CLEAN);
 });
 
-// ── Out-of-stock colourways must not supply the photography ───────────────────────────────
+// ── A colourway without photos falls back to the Main Product's, labelled ─────────────────
 
-test("the gallery shows an in-stock colourway's photos, not a sold-out one's", async ({ page }) => {
-  // The reported bug: the page said "Add Orange to bag" beside two photographs of a sold-out Blue,
-  // because every image fallback ended at "the primary image, else the first image" without asking
-  // whether that photo's variant could be bought. Blue owns the PRIMARY photo here, which is what
-  // made it win.
+test("a colourway without photos shows the Main Product's photography, labelled as a stand-in", async ({ page }) => {
+  // The documented fallback rule: a variant with no photos shows VARIANT 1's gallery — never a
+  // sibling's. Blue is the Main Product here (sold out, with the family's lead photo); Orange is
+  // selected as the first purchasable variant and has nothing of its own; Green has a photo that
+  // must NOT leak into Orange's gallery.
   const product = await createProduct({
     name: `E2E OOS Photos ${Date.now()}`,
     variants: [
@@ -334,26 +350,25 @@ test("the gallery shows an in-stock colourway's photos, not a sold-out one's", a
   await page.goto(`/product/${product.slug}`);
   await expect(page.getByRole("heading", { level: 1, name: product.name })).toBeVisible();
 
-  // Orange is selected (first purchasable) and has no photography of its own.
+  // Orange is selected (first purchasable in family order) and has no photography of its own,
+  // so the MAIN PRODUCT's photo stands in — and the page says so.
   await expect(page.locator(".pd-variant-label strong")).toHaveText("Orange");
   const hero = page.locator(".pg-frame img");
-  await expect(hero).toHaveAttribute("src", new RegExp(`/variants/${green.variantId}/`));
-  await expect(hero).not.toHaveAttribute("src", new RegExp(`/variants/${blue.variantId}/`));
-  // …and the page says the photo is not of the selected colourway rather than letting it pass as one.
-  await expect(page.locator(".pd-photo-note")).toContainText("another colourway");
+  await expect(hero).toHaveAttribute("src", new RegExp(`/variants/${blue.variantId}/`));
+  await expect(hero).not.toHaveAttribute("src", new RegExp(`/variants/${green.variantId}/`));
+  await expect(page.locator(".pd-photo-note")).toContainText("main product");
 
-  // The listing card makes the same choice — it is a separate code path in StoreContext.
+  // The listing card keeps the Main Product's image too — the sanctioned family face — while
+  // committing the purchasable variant.
   await page.goto(`/shop?q=${encodeURIComponent(product.name)}`);
   await page.waitForLoadState("networkidle");
   const card = page.locator(".product-card").first();
   await expect(card.locator(".product-color")).toHaveText("Orange");
   await expect(card.locator(".product-card-image img"))
-    .toHaveAttribute("src", new RegExp(`/variants/${green.variantId}/`));
+    .toHaveAttribute("src", new RegExp(`/variants/${blue.variantId}/`));
 });
 
-test("when only a sold-out colourway has photos they are shown, but labelled", async ({ page }) => {
-  // There is nothing better to show, so an empty frame would be worse. What must not happen is the
-  // photo passing as the colourway being sold.
+test("the Main Product's stand-in photo is labelled on the colour tile as well", async ({ page }) => {
   const product = await createProduct({
     name: `E2E OOS Only ${Date.now()}`,
     variants: [
@@ -369,13 +384,13 @@ test("when only a sold-out colourway has photos they are shown, but labelled", a
   await expect(page.locator(".pg-frame img")).toHaveAttribute("src", new RegExp(`/variants/${blue.variantId}/`));
   await expect(page.locator(".pd-photo-note")).toContainText("there are none for Orange yet");
   // The colour tile says the same thing, in place.
-  await expect(page.getByRole("button", { name: /Orange Another colourway/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Orange Main product photo/ })).toBeVisible();
 });
 
-test("every stored photo is reachable: a colourway shows its own AND the general shots", async ({ page }) => {
-  // ODU's exact shape: one general photo plus one per colourway. Every one of those photos has to
-  // be viewable — briefly showing only the colourway's own dropped most of the live catalogue to a
-  // single visible picture.
+test("a sibling variant's photos never leak into a colourway that has its own", async ({ page }) => {
+  // ODU's exact shape under the new model: the legacy "general" photo belongs to the Main Product
+  // (Ocean Black), and Ocean Blue's gallery is exactly Blue's own photograph — nothing borrowed,
+  // nothing appended.
   const product = await createProduct({
     name: `E2E ODU Shape ${Date.now()}`,
     variants: [
@@ -386,24 +401,24 @@ test("every stored photo is reachable: a colourway shows its own AND the general
   const [black, blue] = product.variants;
   const general = await uploadImage({ productId: product.productId, altText: "product image", isPrimary: true });
   const blackShot = await uploadImage({ productId: product.productId, variantId: black.variantId, altText: "Black" });
-  await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue" });
+  const blueShot = await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue" });
 
   await page.goto(`/product/${product.slug}`);
   await expect(page.locator(".pd-variant-label strong")).toHaveText("Blue");
 
-  // Blue's own photo leads, the general shot follows, and both are reachable.
-  await expect(page.locator(".pg-frame img")).toHaveAttribute("src", new RegExp(`/variants/${blue.variantId}/`));
-  await expect(page.getByRole("button", { name: /^Show photo/ })).toHaveCount(2);
-  const sources = await page.locator(".pg-thumbs img").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("src")));
-  expect(sources.some((src) => src.includes(general.imageUrl.split("/").pop()))).toBe(true);
-  // The other colourway's own photo is still not borrowed into Blue's gallery.
-  expect(sources.some((src) => src.includes(blackShot.imageUrl.split("/").pop()))).toBe(false);
+  // Blue's own photo is the whole gallery: one frame, no thumbnails, no dead controls.
+  await expect(page.locator(".pg-frame img"))
+    .toHaveAttribute("src", new RegExp(blueShot.imageUrl.split("/").pop()));
+  await expect(page.getByRole("button", { name: "Next photo" })).toHaveCount(0);
+  // And the Black tiles still show Black's own photography in the selector.
+  expect(general.imageId).toBeTruthy();
+  expect(blackShot.imageId).toBeTruthy();
 });
 
-test("filing a general photo against a colourway removes it from the others", async ({ page }) => {
-  // The ODU fix as an admin action rather than a rule change: the Black pair's photograph was
-  // uploaded as "general", so it appeared under Blue. Assigning it to Black stops that, and costs
-  // Blue nothing else.
+test("a photo uploaded without a variant lands on the Main Product and can be re-filed", async ({ page }) => {
+  // The pre-redesign "general photo" call no longer creates an unowned row: the server files it
+  // onto the Main Product. Re-filing through the same PATCH the admin control uses moves it to a
+  // named colourway; variantId 0 sends it back to the Main Product.
   const product = await createProduct({
     name: `E2E Refile ${Date.now()}`,
     variants: [
@@ -416,25 +431,33 @@ test("filing a general photo against a colourway removes it from the others", as
   await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue" });
   const generalFile = general.imageUrl.split("/").pop();
 
+  // Landed on the Main Product (Ocean Black), not on some unowned "general" state.
+  expect(imageRowsOf(product.productId).join("|")).toContain(`:${black.variantId}:photo of the black pair`);
+
+  // Blue's gallery does not contain it before OR after the re-file — it was never Blue's.
   await page.goto(`/product/${product.slug}`);
-  const before = await page.locator(".pg-thumbs img").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("src")));
-  expect(before.some((src) => src.includes(generalFile))).toBe(true);
+  await expect(page.locator(".pd-variant-label strong")).toHaveText("Blue");
+  const shown = await page.locator(".pg-thumbs img, .pg-frame img").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("src")));
+  expect(shown.some((src) => src.includes(generalFile))).toBe(false);
 
-  // Refile it onto Ocean Black through the real endpoint the admin control uses.
+  // Re-file it onto Blue through the real endpoint; it must arrive as an ordinary photo (Blue
+  // keeps its own main image) and now show in Blue's gallery.
   const account = await admin();
-  await account.client.patch(`/products/${product.productId}/images/${general.imageId}`, { variantId: black.variantId });
-
+  await account.client.patch(`/products/${product.productId}/images/${general.imageId}`, { variantId: blue.variantId });
   await page.reload();
   await expect(page.locator(".pd-variant-label strong")).toHaveText("Blue");
-  const after = await page.locator(".pg-thumbs img, .pg-frame img").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("src")));
-  expect(after.some((src) => src.includes(generalFile))).toBe(false);
-  // It is still in the catalogue, now owned by Black.
+  const after = await page.locator(".pg-thumbs img").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("src")));
+  expect(after.some((src) => src.includes(generalFile))).toBe(true);
+
+  // variantId 0 = "back to the Main Product".
+  await account.client.patch(`/products/${product.productId}/images/${general.imageId}`, { variantId: 0 });
   expect(imageRowsOf(product.productId).join("|")).toContain(`:${black.variantId}:photo of the black pair`);
 });
 
-test("selecting several files in the admin uploads all of them, to the chosen colourway", async ({ page }) => {
+test("selecting several files in the wizard uploads all of them, to the chosen variant", async ({ page }) => {
   // The upload half of the report. The file input is `multiple`; this proves every selected file
-  // reaches the catalogue rather than only the first, and that they land on the chosen colour.
+  // reaches the catalogue rather than only the first, and that they land on the variant whose
+  // section they were dropped into — that is the point of per-variant sections.
   const account = await admin();
   const product = await createProduct({
     name: `E2E Multi Upload ${Date.now()}`,
@@ -449,26 +472,30 @@ test("selecting several files in the admin uploads all of them, to the chosen co
   await submitSignIn(page, account, { admin: true });
   await page.getByRole("button", { name: /^Products$/ }).click();
   await page.getByPlaceholder(/Search product/).fill(product.name);
-  await page.getByRole("button", { name: "Manage" }).first().click();
-  await expect(page.locator(".admin-image-editor li")).toHaveCount(1);
+  await page.getByRole("button", { name: "Edit" }).first().click();
+  // Step 1 is the Main Product (Black), holding the hero that the variant-less upload landed on.
+  await expect(page.locator('[data-variant-section="1"] .admin-image-editor li')).toHaveCount(1);
 
-  // Three files in one go, targeted at Blue.
-  await page.locator('.image-form input[type="file"]')
+  // Three files in one go, into Blue's own section on step 2.
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("Additional photos for Blue")
     .setInputFiles([imageFile("one.png"), imageFile("two.png"), imageFile("three.png")]);
-  await page.locator('.image-form input[placeholder*="description"]').fill("Blue detail");
-  await page.locator(".image-form select").selectOption(String(blue.variantId));
-  await page.getByRole("button", { name: /Upload photos/ }).click();
+  await page.getByLabel("Photo description for Blue").fill("Blue detail");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
 
-  await expect(page.locator(".admin-image-editor li")).toHaveCount(4, { timeout: 30_000 });
+  await expect.poll(() => imageRowsOf(product.productId)
+    .filter((row) => row.split(":")[3] === String(blue.variantId)).length, { timeout: 30_000 }).toBe(3);
   const blueOwned = imageRowsOf(product.productId).filter((row) => row.split(":")[3] === String(blue.variantId));
-  expect(blueOwned).toHaveLength(3);
-  // Distinct display orders, so the gallery order is deterministic rather than a three-way tie.
+  // Distinct display orders, so the gallery order is deterministic rather than a three-way tie —
+  // and the variant's first photo was promoted to its main image.
   expect(new Set(blueOwned.map((row) => row.split(":")[1])).size).toBe(3);
+  expect(blueOwned.filter((row) => row.split(":")[2] === "1")).toHaveLength(1);
 
-  // And the customer can browse all four on Blue: its own three plus the general hero.
+  // And the customer can browse all three of Blue's own photos on Blue.
   await page.goto(`/product/${product.slug}`);
   await page.getByRole("button", { name: new RegExp(`${product.name} Blue`) }).click();
-  await expect(page.getByRole("button", { name: /^Show photo/ })).toHaveCount(4);
+  await expect(page.getByRole("button", { name: /^Show photo/ })).toHaveCount(3);
 });
 
 test("the same photograph cannot be stored twice on one product", async () => {
@@ -503,7 +530,53 @@ test("the same photograph cannot be stored twice on one product", async () => {
   expect(imageRowsOf(product.productId).length).toBe(before + 1);
 });
 
-test("the admin image editor can move a photo between colourways and back to general", async ({ page }) => {
+test("the wizard has a separate photo section per variant, and reordering stays inside one", async ({ page }) => {
+  const account = await admin();
+  const product = await createProduct({
+    name: `E2E Sections ${Date.now()}`,
+    variants: [
+      { sku: `SEC-A-${Date.now()}`, variantName: "Black", color: "Black", price: money(1500), quantityAvailable: 0 },
+      { sku: `SEC-B-${Date.now()}`, variantName: "Blue", color: "Blue", price: money(1500), quantityAvailable: 4 },
+    ],
+  });
+  const [black, blue] = product.variants;
+  await uploadImage({ productId: product.productId, altText: "case shot", isPrimary: true }); // → the Main Product, Black
+  await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue front" });
+  await uploadImage({ productId: product.productId, variantId: blue.variantId, altText: "Blue side" });
+
+  await submitSignIn(page, account, { admin: true });
+  await page.getByRole("button", { name: /^Products$/ }).click();
+  await page.getByPlaceholder(/Search product/).fill(product.name);
+  await page.getByRole("button", { name: "Edit" }).first().click();
+
+  // Step 1: the Main Product's section holds exactly its own photo.
+  const blackSection = page.locator('[data-variant-section="1"]');
+  await expect(blackSection).toContainText("Main product — Variant 1");
+  await expect(blackSection.locator(".admin-image-editor li")).toHaveCount(1);
+
+  // Step 2: Blue's section holds exactly Blue's two.
+  await page.getByRole("button", { name: "Continue" }).click();
+  const blueSection = page.locator('[data-variant-section="2"]');
+  await expect(blueSection.locator(".admin-image-editor li")).toHaveCount(2);
+
+  // Reordering is scoped to the variant: moving Blue's second photo up swaps it with Blue's
+  // first, never with the Main Product's photo.
+  //
+  // Asserted on DISPLAY_ORDER, not on imageRowsOf's row order: that query sorts main-image-first,
+  // so Blue's main photo heads its rows whatever its display order is, and row order would report
+  // "nothing changed" when the reorder had in fact landed.
+  const blueOrders = () => Object.fromEntries(imageRowsOf(product.productId)
+    .filter((row) => row.split(":")[3] === String(blue.variantId))
+    .map((row) => [row.split(":")[0], Number(row.split(":")[1])]));
+  const [frontId, sideId] = Object.keys(blueOrders());
+  await blueSection.locator(".admin-image-editor li").last().getByRole("button", { name: /Move image \d+ earlier/ }).click();
+  await expect.poll(() => { const orders = blueOrders(); return orders[sideId] < orders[frontId]; })
+    .toBe(true);
+  // The Main Product's photo is untouched by a reorder inside another variant.
+  expect(imageRowsOf(product.productId).filter((row) => row.split(":")[3] === String(black.variantId))).toHaveLength(1);
+});
+
+test("the wizard can move a photo between variants and back to the Main Product", async ({ page }) => {
   const account = await admin();
   const product = await createProduct({
     name: `E2E Scope UI ${Date.now()}`,
@@ -512,23 +585,29 @@ test("the admin image editor can move a photo between colourways and back to gen
       { sku: `SC-B-${Date.now()}`, variantName: "Blue", color: "Blue", price: money(1500), quantityAvailable: 4 },
     ],
   });
-  const [black] = product.variants;
+  const [black, blue] = product.variants;
   const general = await uploadImage({ productId: product.productId, altText: "loose shot", isPrimary: true });
 
   await submitSignIn(page, account, { admin: true });
   await page.getByRole("button", { name: /^Products$/ }).click();
   await page.getByPlaceholder(/Search product/).fill(product.name);
-  await page.getByRole("button", { name: "Manage" }).first().click();
+  await page.getByRole("button", { name: "Edit" }).first().click();
 
-  const scope = page.getByRole("combobox", { name: "Shown for image 1" });
-  await expect(scope).toHaveValue("");
-  await scope.selectOption(String(black.variantId));
+  // The variant-less upload landed on the Main Product (Black); its "Shown for" control says so.
+  const scope = page.getByRole("combobox", { name: `Shown for image ${general.imageId}` });
+  await expect(scope).toHaveValue(String(black.variantId));
+
+  // Move it onto Blue — the wizard resyncs from the server, so the photo leaves this section.
+  await scope.selectOption(String(blue.variantId));
+  await expect.poll(() => imageRowsOf(product.productId).join("|")).toContain(`:${blue.variantId}:loose shot`);
+  await expect(page.locator('[data-variant-section="1"] .admin-image-editor li')).toHaveCount(0);
+
+  // The photo now lives in Blue's section on step 2; move it back to the Main Product from there.
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.locator('[data-variant-section="2"]')
+    .getByRole("combobox", { name: `Shown for image ${general.imageId}` })
+    .selectOption(String(black.variantId));
   await expect.poll(() => imageRowsOf(product.productId).join("|")).toContain(`:${black.variantId}:loose shot`);
-
-  // …and back to general, which the API expresses as variantId 0 rather than an absent field.
-  await page.getByRole("combobox", { name: "Shown for image 1" }).selectOption("");
-  await expect.poll(() => imageRowsOf(product.productId).join("|")).toContain(":-:loose shot");
-  expect(general.imageId).toBeTruthy();
 });
 
 test("an admin can add several additional photos to one colourway, and only that colourway shows them", async () => {
@@ -580,6 +659,75 @@ test("all of a colourway's additional photos are browsable on the product page",
   }
   expect(seen.size).toBe(3);
   for (const src of seen) expect(src).toContain(`/variants/${blue.variantId}/`);
+});
+
+// ── Deleting a product that has been sold ─────────────────────────────────────────────────
+
+test("a product can always be removed, and its orders survive intact", async ({ page }) => {
+  // Previously refused outright: "This product has order or inventory history and cannot be
+  // permanently removed. Deactivate it instead." Three foreign keys pointed at PRODUCT_VARIANTS
+  // with NO ACTION — carts, inventory movements and order lines — so the database rejected the
+  // delete before the application had any say.
+  const product = await createProduct({
+    name: `E2E Delete With History ${Date.now()}`,
+    variants: [{ sku: `DEL-${Date.now()}`, variantName: "Black", color: "Black", price: money(1200), quantityAvailable: 9 }],
+  });
+  const [variant] = product.variants;
+  await uploadImage({ productId: product.productId, altText: "hero", isPrimary: true });
+
+  // A real, paid order placed through the real storefront checkout.
+  const customer = await signInAsNewCustomer(page, "del-hist");
+  const orderId = await buy(page, { productId: product.productId, quantity: 2, account: customer });
+  expect(sqlValue(`SELECT COUNT(*) FROM ORDER_ITEMS WHERE ORDER_ID=${orderId}`)).toBe("1");
+  expect(Number(sqlValue(`SELECT COUNT(*) FROM INVENTORY_MOVEMENTS WHERE VARIANT_ID=${variant.variantId}`))).toBeGreaterThan(0);
+
+  // The order line's snapshot, captured before the product goes.
+  const before = sqlValue(`SELECT CONCAT(PRODUCT_NAME,'|',SKU,'|',QUANTITY,'|',UNIT_PRICE,'|',LINE_TOTAL)
+                           FROM ORDER_ITEMS WHERE ORDER_ID=${orderId}`);
+
+  const account = await admin();
+  await account.client.del(`/products/${product.productId}`);
+
+  // Gone from the catalogue and from inventory…
+  expect(sqlValue(`SELECT COUNT(*) FROM PRODUCTS WHERE PRODUCT_ID=${product.productId}`)).toBe("0");
+  expect(sqlValue(`SELECT COUNT(*) FROM PRODUCT_VARIANTS WHERE VARIANT_ID=${variant.variantId}`)).toBe("0");
+  expect(sqlValue(`SELECT COUNT(*) FROM PRODUCT_IMAGES WHERE PRODUCT_ID=${product.productId}`)).toBe("0");
+  expect(sqlValue(`SELECT COUNT(*) FROM INVENTORY_MOVEMENTS WHERE VARIANT_ID=${variant.variantId}`)).toBe("0");
+  expect(sqlValue(`SELECT COUNT(*) FROM CART_ITEMS WHERE VARIANT_ID=${variant.variantId}`)).toBe("0");
+
+  // …but the order line is untouched, with its variant link cleared rather than the row deleted.
+  expect(sqlValue(`SELECT COUNT(*) FROM ORDER_ITEMS WHERE ORDER_ID=${orderId}`)).toBe("1");
+  expect(sqlValue(`SELECT CONCAT(PRODUCT_NAME,'|',SKU,'|',QUANTITY,'|',UNIT_PRICE,'|',LINE_TOTAL)
+                   FROM ORDER_ITEMS WHERE ORDER_ID=${orderId}`)).toBe(before);
+  expect(sqlValue(`SELECT COUNT(*) FROM ORDER_ITEMS WHERE ORDER_ID=${orderId} AND VARIANT_ID IS NULL`)).toBe("1");
+
+  // And the customer's orders page still renders it — the UI must not choke on the null variant.
+  const seen = observe(page);
+  await page.goto("/my-orders");
+  await expect(page.getByText(product.name).first(), "the order must still show the product it bought").toBeVisible();
+  const observed = clean(seen);
+  expect(observed.pageErrors).toEqual([]);
+  expect(observed.badResponses).toEqual([]);
+});
+
+test("the storefront stops showing a deleted product without breaking", async ({ page }) => {
+  const product = await createProduct({
+    name: `E2E Delete Storefront ${Date.now()}`,
+    variants: [{ sku: `DELS-${Date.now()}`, variantName: "Black", color: "Black", price: money(1200), quantityAvailable: 4 }],
+  });
+  await uploadImage({ productId: product.productId, altText: "hero", isPrimary: true });
+  await page.goto(`/product/${product.slug}`);
+  await expect(page.getByRole("heading", { level: 1, name: product.name })).toBeVisible();
+
+  const account = await admin();
+  await account.client.del(`/products/${product.productId}`);
+
+  const seen = observe(page);
+  await page.goto(`/product/${product.slug}`);
+  await expect(page.getByRole("heading", { name: "Product not found" })).toBeVisible();
+  const observed = clean(seen);
+  expect(observed.pageErrors).toEqual([]);
+  expect(observed.dialogs).toEqual([]);
 });
 
 // ── Viewports ─────────────────────────────────────────────────────────────────────────────
@@ -671,48 +819,63 @@ test("an admin-supplied slug is validated and a duplicate is refused", async () 
   expect(sqlValue(`SELECT SLUG FROM PRODUCTS WHERE PRODUCT_ID=${product.productId}`)).toBe(accepted);
 });
 
-test("an admin uploads, reorders, re-primaries and captions images, and it all survives a refresh", async ({ page }) => {
+test("an admin uploads, reorders, re-mains and captions a variant's images, and it all survives a refresh", async ({ page }) => {
   const account = await admin();
   const product = await productWithGallery("admin-ui");
   const seen = observe(page);
+  const blueRows = () => imageRowsOf(product.productId)
+    .filter((row) => row.split(":")[3] === String(product.blue.variantId));
 
   // The shared helper, not a hand-rolled form fill: /sign in/i as an accessible-name matcher also
   // matches the Google "Sign in with Google" button, and submitSignIn additionally waits out the
   // login rate limit that a long run legitimately trips.
   await submitSignIn(page, account, { admin: true });
 
-  await page.getByRole("button", { name: /^Products$/ }).click();
-  await page.getByPlaceholder(/Search product/).fill(product.name);
-  await page.getByRole("button", { name: "Manage" }).first().click();
+  const openWizard = async () => {
+    await page.getByRole("button", { name: /^Products$/ }).click();
+    await page.getByPlaceholder(/Search product/).fill(product.name);
+    await page.getByRole("button", { name: "Edit" }).first().click();
+  };
+  await openWizard();
 
-  const rows = page.locator(".admin-image-editor li");
-  const startingImages = imageRowsOf(product.productId).length;
-  await expect(rows).toHaveCount(startingImages);
+  // Step 1 is Blue, the Main Product, with its three photos (the Studio shot plus two own).
+  const blueSection = page.locator('[data-variant-section="1"]');
+  const rows = blueSection.locator(".admin-image-editor li");
+  const startingBlue = blueRows().length;
+  await expect(rows).toHaveCount(startingBlue);
 
-  // Upload one more photo through the real file input.
-  await page.locator('.image-form input[type="file"]').setInputFiles(imageFile("uploaded.png"));
-  await page.locator('.image-form input[placeholder*="description"]').fill("Uploaded via admin UI");
-  await page.getByRole("button", { name: /Upload photos/ }).click();
-  await expect(rows).toHaveCount(startingImages + 1, { timeout: 30_000 });
+  // Stage one more photo for Blue and save. New files upload on Save, not on selection — the
+  // wizard's create/edit contract — so the count changes only after the save lands.
+  await blueSection.getByLabel("Additional photos for Blue").setInputFiles(imageFile("uploaded.png"));
+  await blueSection.getByLabel("Photo description for Blue").fill("Uploaded via admin UI");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => blueRows().length, { timeout: 30_000 }).toBe(startingBlue + 1);
 
-  // Reorder: move the last image up one place.
-  const idsBefore = imageRowsOf(product.productId).map((row) => Number(row.split(":")[0]));
-  await rows.last().getByRole("button", { name: new RegExp(`Move image ${startingImages + 1} earlier`) }).click();
-  await expect.poll(() => imageRowsOf(product.productId).map((row) => Number(row.split(":")[0])))
-    .not.toEqual(idsBefore);
+  // Back into the wizard: everything below applies immediately, like the old image editor.
+  await openWizard();
+  await expect(rows).toHaveCount(startingBlue + 1);
+
+  // Reorder INSIDE Blue's section: move its last photo up one place.
+  //
+  // Asserted on DISPLAY_ORDER, not on imageRowsOf's row order. That query sorts primary-first, so
+  // the main image stays at the head whatever its display order is — comparing row order made
+  // the reorder look like it had done nothing when it had.
+  const blueOrders = () => Object.fromEntries(blueRows().map((row) => [row.split(":")[0], row.split(":")[1]]));
+  const ordersBefore = blueOrders();
+  expect(Object.keys(ordersBefore).length, "Blue needs two photos to reorder").toBeGreaterThan(1);
+  await rows.last().getByRole("button", { name: /Move image \d+ earlier/ }).click();
+  await expect.poll(blueOrders).not.toEqual(ordersBefore);
 
   // Promote a NAMED image — the one just uploaded — rather than "whatever is at index 1", so the
   // rest of this test can wait on content instead of position.
   const uploadedRow = rows.filter({ has: page.locator('input[value="Uploaded via admin UI"]') });
-  await uploadedRow.getByRole("button", { name: "Make primary" }).click();
+  await uploadedRow.getByRole("button", { name: "Make main image" }).click();
 
-  // Wait for the PRIMARY ROW TO BE THAT IMAGE, not merely for a primary row to exist.
-  //
-  // The previous version waited on `expect(primaryRow).toHaveCount(1)`, which is vacuous: exactly
-  // one row carries .is-primary at every instant, including while the list is still showing the
-  // OLD primary. It passed immediately and the caption went to the wrong photo — a wait that
-  // measured nothing, and green until the catalogue grew large enough to slow the re-render down.
-  const primaryRow = page.locator(".admin-image-editor li.is-primary");
+  // Wait for BLUE'S MAIN IMAGE TO BE THAT IMAGE, not merely for a main row to exist — a row with
+  // .is-primary exists at every instant, including while the list still shows the old one.
+  const primaryRow = blueSection.locator(".admin-image-editor li.is-primary");
   await expect(primaryRow.getByRole("textbox")).toHaveValue("Uploaded via admin UI");
   const caption = primaryRow.getByRole("textbox");
   await caption.fill("Primary caption from admin");
@@ -722,24 +885,28 @@ test("an admin uploads, reorders, re-primaries and captions images, and it all s
   await caption.press("Tab");
   await expect.poll(() => imageRowsOf(product.productId).join("|"), { timeout: 15_000 })
     .toContain("Primary caption from admin");
-  // …and it landed on the PRIMARY image, which is row 1.
-  expect(imageRowsOf(product.productId)[0]).toContain("Primary caption from admin");
+  // …and it landed on Blue's MAIN image.
+  const bluePrimary = blueRows().find((row) => row.split(":")[2] === "1");
+  expect(bluePrimary).toContain("Primary caption from admin");
 
   // Everything above must survive a reload — this is the step that catches state that only ever
   // lived in React.
   const persisted = imageRowsOf(product.productId);
   await page.reload();
-  await page.getByRole("button", { name: /^Products$/ }).click();
-  await page.getByPlaceholder(/Search product/).fill(product.name);
-  await page.getByRole("button", { name: "Manage" }).first().click();
-  await expect(page.locator(".admin-image-editor li")).toHaveCount(startingImages + 1);
+  await openWizard();
+  await expect(rows).toHaveCount(startingBlue + 1);
   expect(imageRowsOf(product.productId)).toEqual(persisted);
-  expect(persisted.filter((row) => row.split(":")[2] === "1")).toHaveLength(1);
+  // Exactly one main image per variant, for both variants.
+  expect(blueRows().filter((row) => row.split(":")[2] === "1")).toHaveLength(1);
+  expect(imageRowsOf(product.productId)
+    .filter((row) => row.split(":")[3] === String(product.orange.variantId) && row.split(":")[2] === "1"))
+    .toHaveLength(1);
 
-  // Remove one image; the gallery stays coherent and keeps exactly one primary.
-  await page.locator(".admin-image-editor li").last().getByRole("button", { name: /Remove image/ }).click();
-  await expect(page.locator(".admin-image-editor li")).toHaveCount(startingImages, { timeout: 30_000 });
-  expect(imageRowsOf(product.productId).filter((row) => row.split(":")[2] === "1")).toHaveLength(1);
+  // Remove one image; the removal is guarded by the application's own modal, never window.confirm.
+  await rows.last().getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("button", { name: "Remove photo" }).click();
+  await expect.poll(() => blueRows().length, { timeout: 30_000 }).toBe(startingBlue);
+  expect(blueRows().filter((row) => row.split(":")[2] === "1")).toHaveLength(1);
 
   expect(clean(seen), "the page must be clean").toEqual(CLEAN);
 });

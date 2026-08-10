@@ -1,104 +1,68 @@
-import { galleryFor, imageForVariant, isBorrowedImage, mapProduct } from "./StoreContext";
+import { galleryFor, imageForVariant, isBorrowedImage, mainVariantOf, mapProduct, selectDefaultVariant } from "./StoreContext";
 
 /**
- * Which photos a colourway shows.
+ * Which photos a colourway shows, under the product-family redesign.
  *
- * Regression cover for a reported bug: a product page that said "Add Orange to bag" while showing
- * two photographs of a sold-out Blue, because every fallback ended at "the primary image, else the
- * first image" without asking whether that photo's variant could be bought.
+ * The rule is deliberately short and deterministic (see galleryFor):
+ *   1. the selected variant's own photos, main image first;
+ *   2. else the Main Product's (variant 1's) gallery, labelled as a stand-in;
+ *   3. else nothing — the gallery renders its placeholder frame.
+ * No other variant's photography is ever mixed in, and "general product photos" no longer exist:
+ * an image that still arrives without a variantId is read as the Main Product's, which is where
+ * the migration filed such rows.
  */
 
-const image = (id, variantId, alt) => ({ imageId: id, publicId: `p${id}`, imageUrl: `/img/${id}.jpg`, altText: alt, variantId, isPrimary: id === 1 });
-const variant = (id, quantityAvailable, isActive = true) => ({ variantId: id, sku: `SKU${id}`, price: 100, quantityAvailable, isActive });
+const image = (id, variantId, alt, isPrimary = false) =>
+  ({ imageId: id, publicId: `p${id}`, imageUrl: `/img/${id}.jpg`, altText: alt, variantId, isPrimary });
+const variant = (id, position, quantityAvailable, isActive = true) =>
+  ({ variantId: id, position, mainVariant: position === 1, sku: `SKU${id}`, price: 100, quantityAvailable, isActive });
 
-const BLUE = variant(10, 0);        // sold out
-const ORANGE = variant(11, 5);      // in stock, the one that gets selected
-const GREEN = variant(12, 7);       // in stock
+const MAIN = variant(10, 1, 0);       // the Main Product — sold out in most fixtures here
+const ORANGE = variant(11, 2, 5);     // in stock, the one the fallback rule selects
+const GREEN = variant(12, 3, 7);      // in stock
 
 describe("galleryFor", () => {
-  test("a variant shows its own photos AND the general product photos", () => {
-    // A general photo is product-wide by definition — a case, a lens detail, a packaging shot — so
-    // it belongs in every colourway's gallery. Briefly returning only the variant's own photos hid
-    // these entirely: measured on the live catalogue, five of six products fell to a single visible
-    // picture because each was authored as "one photo per colour plus one general".
-    const product = { variants: [BLUE, ORANGE], images: [image(1, null, "general"), image(2, 11, "orange")] };
-    expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["orange", "general"]);
-  });
-
-  test("several photos on one colourway are all shown, own first, then the general ones", () => {
+  test("a variant shows its own photos only, main image first", () => {
+    // The server orders a product's images main-first; the per-variant filter must preserve that,
+    // so the variant's main image is frame one and its additional photos follow in saved order.
     const product = {
-      variants: [BLUE, ORANGE],
-      images: [image(1, null, "general"), image(2, 11, "orange-a"), image(3, 11, "orange-b"), image(4, 11, "orange-c")],
+      variants: [MAIN, ORANGE],
+      images: [image(2, 11, "orange-main", true), image(3, 11, "orange-b"), image(4, 11, "orange-c"),
+        image(1, 10, "main-hero", true)],
     };
     expect(galleryFor(product, ORANGE).map((i) => i.altText))
-      .toEqual(["orange-a", "orange-b", "orange-c", "general"]);
+      .toEqual(["orange-main", "orange-b", "orange-c"]);
   });
 
-  test("filing a photo against a colourway removes it from the other colourways", () => {
-    // This is the ODU fix, expressed as data rather than as a rule. The Black pair's photograph was
-    // uploaded as "general", so it showed under Blue. Assigning it to Black — what the admin
-    // image editor's "Shown for" control does — is what stops that, and it costs Blue nothing.
-    const asGeneral = { variants: [BLUE, ORANGE], images: [image(1, null, "black pair"), image(2, 11, "orange")] };
-    expect(galleryFor(asGeneral, ORANGE).map((i) => i.altText)).toContain("black pair");
-
-    const filed = { variants: [BLUE, ORANGE], images: [image(1, 10, "black pair"), image(2, 11, "orange")] };
-    expect(galleryFor(filed, ORANGE).map((i) => i.altText)).toEqual(["orange"]);
-    expect(galleryFor(filed, BLUE).map((i) => i.altText)).toEqual(["black pair"]);
+  test("another variant's gallery is never mixed into a variant that has its own photos", () => {
+    const product = { variants: [MAIN, ORANGE], images: [image(1, 10, "main-hero", true), image(2, 11, "orange", true)] };
+    expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["orange"]);
+    expect(galleryFor(product, MAIN).map((i) => i.altText)).toEqual(["main-hero"]);
   });
 
-  test("a variant with no photos of its own falls back to the general shots", () => {
-    const product = { variants: [BLUE, ORANGE], images: [image(1, null, "general"), image(2, 10, "blue")] };
-    expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["general"]);
+  test("a variant with no photos falls back to the Main Product's gallery, and says so", () => {
+    const product = { variants: [MAIN, ORANGE], images: [image(1, 10, "main-hero", true), image(5, 10, "main-b")] };
+    const gallery = galleryFor(product, ORANGE);
+    expect(gallery.map((i) => i.altText)).toEqual(["main-hero", "main-b"]);
+    expect(isBorrowedImage(product, ORANGE, gallery[0])).toBe(true);
   });
 
-  // ── The reported bug ────────────────────────────────────────────────────────────────────
-
-  test("borrows from an IN-STOCK colourway rather than a sold-out one", () => {
-    // Blue is sold out and owns the PRIMARY photo; Green is in stock. Orange has none of its own.
-    const product = { variants: [BLUE, ORANGE, GREEN], images: [image(1, 10, "blue"), image(3, 12, "green")] };
-    expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["green"]);
+  test("a legacy image without a variantId is read as the Main Product's", () => {
+    // The migration files these rows onto variant 1; a payload that predates it must render the
+    // same way rather than differently until the server restarts.
+    const product = { variants: [MAIN, ORANGE], images: [image(1, null, "legacy-general")] };
+    expect(galleryFor(product, MAIN).map((i) => i.altText)).toEqual(["legacy-general"]);
+    expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["legacy-general"]);
+    expect(isBorrowedImage(product, MAIN, product.images[0])).toBe(false);
+    expect(isBorrowedImage(product, ORANGE, product.images[0])).toBe(true);
   });
 
-  test("never leads with a sold-out variant's photo even when it is the primary one", () => {
-    const product = { variants: [BLUE, ORANGE, GREEN], images: [image(1, 10, "blue"), image(3, 12, "green")] };
-    expect(galleryFor(product, ORANGE)[0].altText).not.toBe("blue");
-    expect(imageForVariant(product, ORANGE).altText).toBe("green");
-  });
-
-  test("the rule this replaced would fail the test above", () => {
-    // Guards against the regression cover being vacuous. This is the old fallback, verbatim:
-    //   variant's own -> isPrimary -> first non-variant -> images[0]
-    // On the same fixture it picks the sold-out Blue, which is the reported bug. If a future change
-    // made galleryFor equivalent to this again, the test above would start failing — and if this
-    // assertion ever passes trivially, the fixture has stopped exercising the case.
-    const product = { variants: [BLUE, ORANGE, GREEN], images: [image(1, 10, "blue"), image(3, 12, "green")] };
-    const oldRule = (images, forVariant) => images.find((i) => String(i.variantId) === String(forVariant.variantId))
-      || images.find((i) => i.isPrimary)
-      || images.find((i) => !i.variantId)
-      || images[0];
-    expect(oldRule(product.images, ORANGE).altText).toBe("blue");
-    expect(galleryFor(product, ORANGE)[0].altText).toBe("green");
-  });
-
-  test("an inactive variant's photos are not borrowed either", () => {
-    const inactive = variant(13, 9, false);
-    const product = { variants: [ORANGE, inactive], images: [image(4, 13, "inactive")] };
-    // Nothing purchasable has a photo, so the last resort applies rather than silently showing
-    // nothing — but it is reached only because there is no better option.
-    expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["inactive"]);
-  });
-
-  test("when only a sold-out variant has photography, it is shown as a last resort", () => {
-    // The honest outcome: a product with photos should not render an empty frame. The page labels
-    // it — see isBorrowedImage — rather than pretending the picture is the selected colourway.
-    const product = { variants: [BLUE, ORANGE], images: [image(1, 10, "blue")] };
-    expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["blue"]);
-    expect(isBorrowedImage(product, ORANGE, galleryFor(product, ORANGE)[0])).toBe(true);
-  });
-
-  test("a fully sold-out product still shows its photographs", () => {
-    const product = { variants: [BLUE, variant(14, 0)], images: [image(1, 10, "blue")] };
-    expect(galleryFor(product, BLUE).map((i) => i.altText)).toEqual(["blue"]);
+  test("when neither the variant nor the Main Product has photos, the gallery is empty", () => {
+    // Empty means the placeholder frame — never a sibling variant's photograph (rule 6). GREEN has
+    // a photo, but GREEN is not the Main Product, so ORANGE must not show it.
+    const product = { variants: [MAIN, ORANGE, GREEN], images: [image(3, 12, "green", true)] };
+    expect(galleryFor(product, ORANGE)).toEqual([]);
+    expect(imageForVariant(product, ORANGE)).toBeUndefined();
   });
 
   test("a product with no images at all yields an empty gallery, not a crash", () => {
@@ -107,40 +71,88 @@ describe("galleryFor", () => {
     expect(imageForVariant({ variants: [], images: [] }, null)).toBeUndefined();
   });
 
-  test("borrowed order follows the shared variant order, so it is deterministic", () => {
-    const product = { variants: [BLUE, ORANGE, GREEN], images: [image(5, 12, "green"), image(6, 10, "blue")] };
-    // Called repeatedly to catch an ordering that depends on image arrival order.
+  test("the gallery is deterministic across repeated calls", () => {
+    const product = { variants: [MAIN, ORANGE], images: [image(5, 10, "main-b"), image(1, 10, "main-hero", true)] };
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["green"]);
+      expect(galleryFor(product, ORANGE).map((i) => i.altText)).toEqual(["main-b", "main-hero"]);
     }
   });
 });
 
-describe("isBorrowedImage", () => {
-  test("is true only for another colourway's photo", () => {
-    expect(isBorrowedImage({}, ORANGE, image(1, 10, "blue"))).toBe(true);
-    expect(isBorrowedImage({}, ORANGE, image(2, 11, "orange"))).toBe(false);
-    // A general product shot is not "another colourway" — it belongs to no variant.
-    expect(isBorrowedImage({}, ORANGE, image(3, null, "general"))).toBe(false);
-    expect(isBorrowedImage({}, ORANGE, undefined)).toBe(false);
+describe("mainVariantOf", () => {
+  test("is the variant at position 1, regardless of array order", () => {
+    expect(mainVariantOf({ variants: [GREEN, ORANGE, MAIN] }).variantId).toBe(10);
+  });
+  test("falls back to family order for a payload without positions", () => {
+    const legacyA = { variantId: 21, quantityAvailable: 1 };
+    const legacyB = { variantId: 22, quantityAvailable: 1 };
+    expect(mainVariantOf({ variants: [legacyB, legacyA] }).variantId).toBe(21);
+  });
+});
+
+describe("selectDefaultVariant", () => {
+  test("selects the Main Product when it is purchasable", () => {
+    const buyableMain = variant(10, 1, 3);
+    expect(selectDefaultVariant([ORANGE, buyableMain]).variantId).toBe(10);
+  });
+  test("falls back to the first purchasable variant in family order when the main is sold out", () => {
+    expect(selectDefaultVariant([GREEN, MAIN, ORANGE]).variantId).toBe(11);
+  });
+  test("honours a ?variant= POSITION deep link only when purchasable", () => {
+    expect(selectDefaultVariant([MAIN, ORANGE, GREEN], "3").variantId).toBe(12);
+    // Position 1 is sold out, so the link is not honoured and the rule falls back.
+    expect(selectDefaultVariant([MAIN, ORANGE, GREEN], "1").variantId).toBe(11);
+    // A legacy link carrying a raw variant id matches no position and falls back too.
+    expect(selectDefaultVariant([MAIN, ORANGE, GREEN], "12").variantId).toBe(11);
+  });
+  test("returns null when nothing is purchasable", () => {
+    expect(selectDefaultVariant([MAIN, variant(14, 2, 0)])).toBeNull();
   });
 });
 
 describe("the listing card picks the same photo", () => {
-  test("a card selling Orange does not carry a sold-out Blue's photograph", () => {
+  test("a card selling the fallback variant uses that variant's own photo when it has one", () => {
     const mapped = mapProduct({
       productId: 1, slug: "s", productName: "Frame", basePrice: 100, isNew: false,
       variants: [
-        { ...BLUE, variantName: "Blue" },
+        { ...MAIN, variantName: "Main" },
         { ...ORANGE, variantName: "Orange" },
-        { ...GREEN, variantName: "Green" },
       ],
-      images: [image(1, 10, "blue"), image(3, 12, "green")],
+      images: [image(1, 10, "main-hero", true), image(2, 11, "orange", true)],
       categories: [], attributes: {},
     });
-    // Orange is the default (first purchasable) and has no photo of its own.
     expect(mapped.color).toBe("Orange");
-    expect(mapped.image).toBe("/img/3.jpg");
-    expect(mapped.image).not.toBe("/img/1.jpg");
+    expect(mapped.image).toBe("/img/2.jpg");
+  });
+
+  test("a card whose committed variant has no photo retains the Main Product's image", () => {
+    // Sanctioned by the redesign: the Main Product's main image fronts the family in listings,
+    // and the product page then labels it as a stand-in for the selected colourway.
+    const mapped = mapProduct({
+      productId: 1, slug: "s", productName: "Frame", basePrice: 100, isNew: false,
+      variants: [
+        { ...MAIN, variantName: "Main" },
+        { ...ORANGE, variantName: "Orange" },
+      ],
+      images: [image(1, 10, "main-hero", true)],
+      categories: [], attributes: {},
+    });
+    expect(mapped.color).toBe("Orange");
+    expect(mapped.image).toBe("/img/1.jpg");
+  });
+
+  test("cards iterate variants in family order, main first", () => {
+    const mapped = mapProduct({
+      productId: 1, slug: "s", productName: "Frame", basePrice: 100, isNew: false,
+      variants: [
+        { ...GREEN, variantName: "Green" },
+        { ...variant(10, 1, 2), variantName: "Main" },
+        { ...ORANGE, variantName: "Orange" },
+      ],
+      images: [],
+      categories: [], attributes: {},
+    });
+    expect(mapped.variants.map((candidate) => candidate.variantName)).toEqual(["Main", "Orange", "Green"]);
+    expect(mapped.color).toBe("Main");
   });
 });

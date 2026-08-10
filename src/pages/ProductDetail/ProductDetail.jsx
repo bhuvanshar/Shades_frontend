@@ -29,7 +29,11 @@ export default function ProductDetail() {
   const [activeTab, setActiveTab] = useState("description");
   const [selectedVariantId, setSelectedVariantId] = useState(null);
   const [wishlistError, setWishlistError] = useState("");
-  const requestedVariantId = params.get("variant");
+  // The deep link carries the variant's family POSITION (?variant=2), never its sequential
+  // database id — public URLs stopped publishing internal ids when the slug replaced the product
+  // id, and the variant id would reopen the same hole. Old id-carrying links simply fail to match
+  // a position and fall back to the default-selection rule.
+  const requestedPosition = params.get("variant");
 
   useEffect(() => {
     let active = true;
@@ -88,12 +92,13 @@ export default function ProductDetail() {
     document.title = `${product.name} · Shades World`;
   }, [product]);
 
-  // The variant this URL resolves to, by the one shared rule. An in-stock ?variant= wins; an
-  // unknown, inactive or out-of-stock one falls back to the first purchasable variant; null means
-  // genuinely nothing is buyable.
+  // The variant this URL resolves to, by the one shared rule: the Main Product when purchasable,
+  // else the first purchasable variant in family order. An in-stock ?variant= position wins; an
+  // unknown, inactive or out-of-stock one falls back to that rule; null means genuinely nothing
+  // is buyable.
   const resolvedVariant = useMemo(
-    () => (product ? selectDefaultVariant(product.variants, requestedVariantId) : null),
-    [product, requestedVariantId]
+    () => (product ? selectDefaultVariant(product.variants, requestedPosition) : null),
+    [product, requestedPosition]
   );
 
   useEffect(() => {
@@ -155,10 +160,11 @@ export default function ProductDetail() {
     //
     // Only purchasable variants are written. selectDefaultVariant deliberately refuses to honour
     // a request for something out of stock, so writing one would round-trip straight back to the
-    // fallback and fight this component's own state.
+    // fallback and fight this component's own state. The value is the family position — see
+    // requestedPosition above for why the id must not appear in the URL.
     if (Number(variant.quantityAvailable) > 0 && variant.isActive !== false) {
       const next = new URLSearchParams(params);
-      next.set("variant", String(variant.variantId));
+      next.set("variant", String(variant.position));
       setParams(next, { replace: true });
     }
   };
@@ -223,11 +229,10 @@ export default function ProductDetail() {
       : `Free shipping on orders of ₹500 or more; add ₹${(500 - unitPrice).toLocaleString("en-IN")} more to qualify.`,
   };
 
-  return <div className="product-detail"><div className="container"><Link to="/" className="back-link">← Back to shop</Link><div className="pd-layout"><div className="pd-image-section"><ProductGallery images={gallery} productName={product.name} badge={product.isNew ? <span className="pd-badge">New</span> : null} />{borrowedPhotos && <p className="pd-photo-note">These photos show another colourway — there are none for {color} yet.</p>}</div><div className="pd-info-section"><span className="pd-category">{product.categories.map((category) => category.categoryName).join(" · ") || product.category}</span><h1 className="pd-title">{product.name}</h1><p className="pd-brand">{product.brand}</p><p className="pd-price">₹{Number(selectedVariant?.price ?? product.price).toLocaleString("en-IN")}</p>
-    {product.variants.length > 0 && <div className="pd-variants"><div className="pd-variant-label"><span>Choose color</span><strong>{color}</strong></div><div className="pd-variant-options">{product.variants.map((variant) => { const variantColor = variantLabel(variant); const variantImage = product.images.find((item) => String(item.variantId) === String(variant.variantId)); const image = variantImage || imageForVariant(product, variant); const inBag = bagCount(variant); return <button key={variant.variantId} className={selectedVariant?.variantId === variant.variantId ? "active" : ""} onClick={() => chooseVariant(variant)} disabled={variant.quantityAvailable <= 0 && inBag === 0}>{image ? <img src={image.imageUrl} alt={`${product.name} ${variantColor}`} /> : <span className="pd-variant-no-image">No photo</span>}<span>{variantColor}</span>{ambiguous(variant) && <small>{variant.sku}</small>}{/* Says which kind of stand-in it is. This used to read "Product photo" for anything that was
-    not the variant's own shot — including another colourway's photograph, which is the one case
-    where the label actively misleads. */}
-{!variantImage && image && <small>{isBorrowedImage(product, variant, image) ? "Another colourway" : "Product photo"}</small>}{variant.quantityAvailable <= 0 && <small>Out of stock</small>}{inBag > 0 && <small className="pd-variant-in-bag">{inBag} in bag</small>}</button>; })}</div><p className={`pd-stock ${available <= (selectedVariant?.lowStockThreshold || 0) ? "low" : ""}`}>{available > 0 ? `${available} in stock · SKU ${selectedVariant.sku}` : "Currently unavailable"}</p></div>}
+  return <div className="product-detail"><div className="container"><Link to="/" className="back-link">← Back to shop</Link><div className="pd-layout"><div className="pd-image-section"><ProductGallery images={gallery} productName={product.name} badge={product.isNew ? <span className="pd-badge">New</span> : null} />{borrowedPhotos && <p className="pd-photo-note">These photos show the main product — there are none for {color} yet.</p>}</div><div className="pd-info-section"><span className="pd-category">{product.categories.map((category) => category.categoryName).join(" · ") || product.category}</span><h1 className="pd-title">{product.name}</h1><p className="pd-brand">{product.brand}</p><p className="pd-price">₹{Number(selectedVariant?.price ?? product.price).toLocaleString("en-IN")}</p>
+    {product.variants.length > 0 && <div className="pd-variants"><div className="pd-variant-label"><span>Choose color</span><strong>{color}</strong></div><div className="pd-variant-options">{product.variants.map((variant) => { const variantColor = variantLabel(variant); const image = imageForVariant(product, variant); const borrowedTile = isBorrowedImage(product, variant, image); const inBag = bagCount(variant); return <button key={variant.variantId} className={selectedVariant?.variantId === variant.variantId ? "active" : ""} onClick={() => chooseVariant(variant)} disabled={variant.quantityAvailable <= 0 && inBag === 0}>{image ? <img src={image.imageUrl} alt={`${product.name} ${variantColor}`} /> : <span className="pd-variant-no-image">No photo</span>}<span>{variantColor}</span>{ambiguous(variant) && <small>{variant.sku}</small>}{/* Says the photo is a stand-in. Under the redesigned rule the only stand-in a tile can carry
+    is the Main Product's photography — no other colourway's is ever borrowed. */}
+{borrowedTile && <small>Main product photo</small>}{variant.quantityAvailable <= 0 && <small>Out of stock</small>}{inBag > 0 && <small className="pd-variant-in-bag">{inBag} in bag</small>}</button>; })}</div><p className={`pd-stock ${available <= (selectedVariant?.lowStockThreshold || 0) ? "low" : ""}`}>{available > 0 ? `${available} in stock · SKU ${selectedVariant.sku}` : "Currently unavailable"}</p></div>}
     <div className="pd-actions">
       <button className={`pd-wishlist-btn ${saved ? "saved" : ""}`} onClick={saveProduct}>{saved ? "♥ Saved to wishlist" : "♡ Save to wishlist"}</button>
       {/* No quantity stepper here by design: the bag is edited in the bag. With the stepper

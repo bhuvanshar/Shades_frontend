@@ -35,7 +35,8 @@ test("deactivating a product asks in an application modal and only acts on confi
   const row = page.locator(".product-admin-row", { hasText: product.name }).first();
   await expect(row).toBeVisible({ timeout: 20_000 });
 
-  const trigger = row.getByRole("button", { name: "Deactivate" });
+  // "Unpublish" since the draft workflow renamed the action; the behaviour under test is the same.
+  const trigger = row.getByRole("button", { name: "Unpublish" });
   await trigger.click();
 
   // An application modal, not a browser one.
@@ -53,7 +54,7 @@ test("deactivating a product asks in an application modal and only acts on confi
 
   // Confirming does the work.
   await trigger.click();
-  await page.getByRole("dialog").getByRole("button", { name: "Deactivate" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Unpublish" }).click();
   await expect(page.getByRole("dialog")).toBeHidden({ timeout: 20_000 });
   await expect.poll(() => isActive(), { timeout: 15_000 }).toBe("0");
   expect(dialogs).toEqual([]);
