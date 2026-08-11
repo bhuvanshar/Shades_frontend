@@ -138,7 +138,7 @@ test("the server refuses to oversell and the bag shows real stock afterwards", a
   await expect(page.locator(".pd-add-btn")).toContainText("Out of stock");
 });
 
-test("a repeated payment call cannot decrement stock twice", async ({ page }) => {
+test("a repeated payment call cannot decrement stock twice, nor send a second confirmation email", async ({ page }) => {
   const product = await freshProduct("idem", [
     { variantName: "Twice", color: "Teal", price: 700, quantityAvailable: 4 },
   ]);
@@ -149,13 +149,31 @@ test("a repeated payment call cannot decrement stock twice", async ({ page }) =>
 
   expect(stockOf(variant.variantId)).toBe(2);
 
-  // Replay the payment callback. It must be idempotent: the existing PAID payment is returned
-  // and no second SALE movement is written.
+  // Paying queued the order-confirmation email — to the buyer, with the order's own snapshot
+  // lines and total. Readable here only because the test backend runs with delivery disabled;
+  // in production the outbox scheduler sends it.
+  const confirmations = () => Number(sqlValue(
+    `SELECT COUNT(*) FROM EMAIL_OUTBOX WHERE SUBJECT='Order #${orderId} confirmed'`));
+  expect(confirmations(), "a paid order must queue its confirmation email").toBe(1);
+  expect(sqlValue(`SELECT RECIPIENT FROM EMAIL_OUTBOX WHERE SUBJECT='Order #${orderId} confirmed'`))
+    .toBe(account.email);
+  const body = sqlValue(`SELECT REPLACE(BODY, CHAR(10), ' ') FROM EMAIL_OUTBOX
+      WHERE SUBJECT='Order #${orderId} confirmed'`);
+  expect(body).toContain(`2 x ${product.name}`);
+  expect(body).toContain("(Teal)");
+  // Derived, not a literal: the total includes whatever tax and shipping the server applied,
+  // and the email must quote exactly the amount the order was charged.
+  const chargedTotal = sqlValue(`SELECT TOTAL_AMOUNT FROM ORDERS WHERE ORDER_ID=${orderId}`);
+  expect(body).toContain(`Order total: INR ${chargedTotal}`);
+
+  // Replay the payment callback. It must be idempotent: the existing PAID payment is returned,
+  // no second SALE movement is written, and no second email is queued.
   await account.client.post(`/payments/orders/${orderId}`, { paymentMethod: "CARD" }).catch(() => {});
   await account.client.post(`/payments/orders/${orderId}`, { paymentMethod: "CARD" }).catch(() => {});
 
   expect(stockOf(variant.variantId)).toBe(2);
   expect(movementsForOrder(orderId).filter((row) => row.startsWith("SALE:"))).toHaveLength(1);
+  expect(confirmations(), "a replayed callback must not email the customer twice").toBe(1);
 });
 
 test("cancelling asks first, cancels once, and restores stock", async ({ page }) => {
